@@ -1,0 +1,11 @@
+{
+  "name": "@nsm/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "echo \"shared: brak lintera na razie\"",
+    "test": "echo \"shared: brak testów na razie\""
+  }
+}

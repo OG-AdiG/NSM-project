@@ -1,0 +1,13 @@
+---
+description: Zasady monorepo NSM (praca inżynierska)
+alwaysApply: true
+---
+
+# NSM monorepo
+
+- Struktura: `apps/api` (NestJS), `apps/web` (Next.js), `apps/ios` (SwiftUI), `packages/shared`.
+- Sekrety tylko w `.env` (wzór: `.env.example`). Nigdy w repo.
+- FR/NFR checklist: `docs/wymagania.md`.
+- UI po polsku. Nazwy pakietów `@nsm/*`.
+- Nie wrzucaj `node_modules`, `.next`, `dist`, wolumenów `docker/data/*` (poza `.gitkeep`).
+- Preferuj małe, spójne zmiany zgodne z istniejącym stylem; bez zbędnych markdownów poza `docs/`.

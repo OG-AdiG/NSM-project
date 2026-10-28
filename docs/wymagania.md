@@ -23,10 +23,10 @@
 
 ### Konta i autoryzacja
 
-- [ ] FR-01 Rejestracja + weryfikacja e-mail *(wysoki)*
-- [ ] FR-02 Logowanie / wylogowanie / JWT *(wysoki)*
-- [ ] FR-03 Reset hasła *(średni)*
-- [ ] FR-04 Role: CLIENT / ARTIST / ADMIN *(wysoki)*
+- [x] FR-01 Rejestracja + weryfikacja e-mail *(wysoki)*
+- [x] FR-02 Logowanie / wylogowanie / JWT *(wysoki)*
+- [x] FR-03 Reset hasła *(średni)*
+- [x] FR-04 Role: CLIENT / ARTIST / ADMIN *(wysoki)* — RBAC w API (`RolesGuard`); rejestracja publiczna tworzy CLIENT
 - [ ] FR-05 Edycja profilu + usunięcie konta (RODO) *(średni)*
 
 ### Prezentacja studia

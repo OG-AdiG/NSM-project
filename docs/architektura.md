@@ -46,9 +46,18 @@ Zgodnie z założeniami z rozdziału 1.7 pracy.
 | Next.js | 3000 |
 | NestJS API | 3001 |
 | Swagger | 3001/api/docs |
-| PostgreSQL | 5432 |
+| PostgreSQL | 5433 (host → 5432 w kontenerze) |
 | Redis | 6379 |
 | MinIO API | 9000 |
 | MinIO Console | 9001 |
 | Mailpit SMTP | 1025 |
 | Mailpit UI | 8025 |
+
+## Pliki (MinIO / FR-08)
+
+- Bucket prywatny: `S3_BUCKET` (`nsm-files`) — zdjęcia referencyjne zgłoszeń.
+- Upload: `POST /api/submissions/:id/photos` (multipart, pole `file`).
+- Usuwanie: `DELETE /api/submissions/:id/photos/:photoId`.
+- Podgląd: podpisane URL GET (TTL ~15 min) w odpowiedzi szczegółów zgłoszenia.
+- Na serwerze Docker: `docker compose up -d minio` (obraz `bitnamilegacy/minio`).
+- `S3_ENDPOINT` musi być osiągalny z przeglądarki (IP LAN, nie `localhost` z Windows → serwer).

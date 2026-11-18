@@ -23,6 +23,9 @@ export default function HomePage() {
         <Link href="/konto" className="rounded px-4 py-2.5 text-sm font-medium underline">
           Moje konto
         </Link>
+        <Link href="/zgloszenie" className="rounded px-4 py-2.5 text-sm font-medium underline">
+          Nowe zgłoszenie
+        </Link>
       </div>
     </main>
   );

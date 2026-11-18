@@ -31,6 +31,12 @@ enum SubmissionStatus {
   CANCELLED
 }
 
+/// Kolor tatuażu (parametr formularza FR-07)
+enum ColorMode {
+  BLACK_GREY
+  COLOR
+}
+
 /// Status sesji (konsultacja / tatuaż / poprawka)
 enum SessionStatus {
   AWAITING_DEPOSIT
@@ -59,7 +65,10 @@ model User {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  tokens AuthToken[]
+  tokens                 AuthToken[]
+  submissionsAsClient    Submission[] @relation("SubmissionClient")
+  submissionsAsArtist    Submission[] @relation("SubmissionArtist")
+  artistProfile          ArtistProfile?
 }
 
 model AuthToken {
@@ -75,4 +84,61 @@ model AuthToken {
 
   @@index([tokenHash])
   @@index([userId, type])
+}
+
+/// Profil publiczny artysty (do wyboru w formularzu FR-07)
+model ArtistProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String
+  styles      String[] @default([])
+  bio         String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// Zgłoszenie projektu tatuażu (FR-07, FR-12)
+model Submission {
+  id                String           @id @default(cuid())
+  clientId          String
+  client            User             @relation("SubmissionClient", fields: [clientId], references: [id], onDelete: Cascade)
+  preferredArtistId String?
+  preferredArtist   User?            @relation("SubmissionArtist", fields: [preferredArtistId], references: [id], onDelete: SetNull)
+  description       String
+  bodyPart          String
+  size              String
+  style             String
+  colorMode         ColorMode
+  status            SubmissionStatus @default(NEW)
+  /// Widełki orientacyjne (FR-09) – uzupełniane później / kalkulatorem
+  estimateMinPln    Int?
+  estimateMaxPln    Int?
+  /// Wycena ostateczna (FR-11)
+  finalPricePln     Int?
+  sessionCount      Int?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  photos ReferencePhoto[]
+
+  @@index([clientId])
+  @@index([preferredArtistId])
+  @@index([status])
+}
+
+/// Zdjęcia referencyjne (FR-08) – pliki w MinIO/S3
+model ReferencePhoto {
+  id           String     @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  /// Klucz obiektu w S3/MinIO
+  objectKey    String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime   @default(now())
+
+  @@index([submissionId])
 }

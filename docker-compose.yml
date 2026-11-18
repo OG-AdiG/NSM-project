@@ -34,20 +34,31 @@ services:
 
   minio:
     # Oficjalne minio/minio i quay.io/minio są niedostępne (2025/2026)
+    # Bitnami: nie nadpisuj `command` — własny entrypoint ustawia API/konsolę.
+    # Named volume zamiast bind-mountu: kontener (UID 1001) ma prawo zapisu bez sudo/chown.
     image: bitnamilegacy/minio:2024.6.13
     container_name: nsm-minio
     restart: unless-stopped
-    command: minio server /bitnami/minio/data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+      MINIO_API_PORT_NUMBER: "9000"
+      MINIO_CONSOLE_PORT_NUMBER: "9001"
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET:-nsm-files}
+      # URL API widoczny dla konsoli / podpisanych linków (IP serwera LAN)
+      MINIO_SERVER_URL: ${S3_ENDPOINT:-http://192.168.1.28:9000}
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-http://192.168.1.28:9001}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./docker/data/minio:/bitnami/minio/data
-
-
+      - minio_data:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   mailpit:
     image: axllent/mailpit:latest
@@ -56,3 +67,6 @@ services:
     ports:
       - "1025:1025"
       - "8025:8025"
+
+volumes:
+  minio_data:

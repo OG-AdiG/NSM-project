@@ -86,13 +86,33 @@ export default function AccountPage() {
           </dd>
         </div>
       </dl>
-      <button
-        type="button"
-        onClick={logout}
-        className="w-fit rounded border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-100"
-      >
-        Wyloguj
-      </button>
+      <div className="flex flex-wrap gap-3">
+        {user.role === 'CLIENT' || user.role === 'ADMIN' ? (
+          <Link
+            href="/zgloszenie"
+            className="rounded bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
+          >
+            Nowe zgłoszenie
+          </Link>
+        ) : null}
+        <Link
+          href="/zgloszenia"
+          className="rounded border border-neutral-300 px-4 py-2.5 text-sm hover:bg-neutral-100"
+        >
+          {user.role === 'ARTIST'
+            ? 'Przypisane zgłoszenia'
+            : user.role === 'ADMIN'
+              ? 'Wszystkie zgłoszenia'
+              : 'Moje zgłoszenia'}
+        </Link>
+        <button
+          type="button"
+          onClick={logout}
+          className="rounded border border-neutral-300 px-4 py-2.5 text-sm hover:bg-neutral-100"
+        >
+          Wyloguj
+        </button>
+      </div>
     </main>
   );
 }

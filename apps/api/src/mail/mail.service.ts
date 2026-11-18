@@ -23,6 +23,14 @@ export class MailService {
     });
   }
 
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   async send(to: string, subject: string, html: string, text?: string) {
     try {
       await this.transporter.sendMail({
@@ -57,6 +65,63 @@ export class MailService {
        <p>Otrzymaliśmy prośbę o zresetowanie hasła. Kliknij w odnośnik:</p>
        <p><a href="${link}">${link}</a></p>
        <p>Link jest ważny przez 1 godzinę. Jeśli to nie Ty – zignoruj tę wiadomość.</p>`,
+    );
+  }
+
+  async sendUnassignedSubmissionEmail(to: string, link: string, summary: string) {
+    const s = this.escapeHtml(summary);
+    await this.send(
+      to,
+      'Nowe zgłoszenie bez artysty – NSM Studio',
+      `<p>Wpłynęło zgłoszenie bez preferowanego artysty (pula do przypisania).</p>
+       <p>${s}</p>
+       <p><a href="${link}">Otwórz zgłoszenie</a></p>`,
+    );
+  }
+
+  async sendAssignedSubmissionEmail(to: string, link: string, summary: string) {
+    const s = this.escapeHtml(summary);
+    await this.send(
+      to,
+      'Nowe zgłoszenie przypisane do Ciebie – NSM Studio',
+      `<p>Masz nowe zgłoszenie projektu.</p>
+       <p>${s}</p>
+       <p><a href="${link}">Otwórz zgłoszenie</a></p>`,
+    );
+  }
+
+  async sendQuoteEmail(
+    to: string,
+    link: string,
+    pricePln: number,
+    note: string | null,
+  ) {
+    await this.send(
+      to,
+      'Wycena Twojego zgłoszenia – NSM Studio',
+      `<p>Otrzymałeś wycenę: <strong>${pricePln} zł</strong>.</p>
+       ${note ? `<p>${this.escapeHtml(note)}</p>` : ''}
+       <p><a href="${link}">Zobacz i zaakceptuj</a></p>`,
+    );
+  }
+
+  async sendRejectionEmail(to: string, link: string, reason: string) {
+    await this.send(
+      to,
+      'Zgłoszenie odrzucone – NSM Studio',
+      `<p>Twoje zgłoszenie zostało odrzucone.</p>
+       <p><strong>Powód:</strong> ${this.escapeHtml(reason)}</p>
+       <p><a href="${link}">Zobacz szczegóły</a></p>`,
+    );
+  }
+
+  async sendSubmissionMessageEmail(to: string, link: string, preview: string) {
+    await this.send(
+      to,
+      'Nowa wiadomość w zgłoszeniu – NSM Studio',
+      `<p>Nowa wiadomość:</p>
+       <blockquote>${this.escapeHtml(preview)}</blockquote>
+       <p><a href="${link}">Odpowiedz w aplikacji</a></p>`,
     );
   }
 }

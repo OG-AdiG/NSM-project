@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   COLOR_MODE_LABELS,
   ColorMode,
@@ -22,6 +22,12 @@ type SubmissionListItem = {
   colorMode: ColorMode;
   status: SubmissionStatus;
   createdAt: string;
+  estimateMinPln: number | null;
+  estimateMaxPln: number | null;
+  finalPricePln: number | null;
+  preferredArtistId: string | null;
+  isArchived?: boolean;
+  canDelete?: boolean;
   preferredArtist?: {
     artistProfile?: { displayName: string } | null;
     firstName: string | null;
@@ -34,7 +40,9 @@ type SubmissionListItem = {
   } | null;
 };
 
-function titleForRole(role: StoredUser['role'] | undefined) {
+function titleForRole(role: StoredUser['role'] | undefined, unassigned: boolean, archived: boolean) {
+  if (archived) return 'Archiwum zgłoszeń';
+  if (unassigned) return 'Pula bez artysty';
   if (role === 'ARTIST') return 'Zgłoszenia przypisane do mnie';
   if (role === 'ADMIN') return 'Wszystkie zgłoszenia';
   return 'Moje zgłoszenia';
@@ -45,22 +53,41 @@ export default function SubmissionsListPage() {
   const [user, setUser] = useState<StoredUser | null>(null);
   const [items, setItems] = useState<SubmissionListItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<SubmissionStatus | 'ALL'>('ALL');
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [archived, setArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     const token = getAccessToken();
     if (!token) {
       router.replace('/logowanie');
       return;
     }
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams();
+    if (unassignedOnly) params.set('unassigned', '1');
+    if (archived) params.set('archived', '1');
+    const qs = params.toString();
+    try {
+      const data = await apiFetch<SubmissionListItem[]>(
+        `/submissions${qs ? `?${qs}` : ''}`,
+        { accessToken: token },
+      );
+      setItems(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Błąd ładowania');
+    } finally {
+      setLoading(false);
+    }
+  }, [archived, router, unassignedOnly]);
+
+  useEffect(() => {
     setUser(getStoredUser());
-    apiFetch<SubmissionListItem[]>('/submissions', { accessToken: token })
-      .then(setItems)
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [router]);
+    void load();
+  }, [load]);
 
   const filtered = useMemo(
     () => (statusFilter === 'ALL' ? items : items.filter((i) => i.status === statusFilter)),
@@ -68,7 +95,7 @@ export default function SubmissionsListPage() {
   );
 
   async function onDelete(id: string) {
-    if (!confirm('Na pewno usunąć to zgłoszenie? Tej operacji nie można cofnąć.')) return;
+    if (!confirm('Usunąć lub przenieść do archiwum to zgłoszenie?')) return;
     const token = getAccessToken();
     if (!token) return;
     setBusyId(id);
@@ -85,6 +112,7 @@ export default function SubmissionsListPage() {
 
   const canCreate = user?.role === 'CLIENT' || user?.role === 'ADMIN';
   const showClient = user?.role === 'ARTIST' || user?.role === 'ADMIN';
+  const isAdmin = user?.role === 'ADMIN';
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 px-6 py-12">
@@ -93,14 +121,16 @@ export default function SubmissionsListPage() {
           <Link href="/konto" className="text-sm text-neutral-500 hover:text-neutral-800">
             ← Konto
           </Link>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">{titleForRole(user?.role)}</h1>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+            {titleForRole(user?.role, unassignedOnly, archived)}
+          </h1>
           {user?.role === 'ARTIST' ? (
             <p className="mt-1 text-sm text-neutral-600">
-              Widzisz wyłącznie zgłoszenia, w których jesteś preferowanym artystą.
+              Widzisz wyłącznie zgłoszenia przypisane do Ciebie.
             </p>
           ) : null}
         </div>
-        {canCreate ? (
+        {canCreate && !archived ? (
           <Link
             href="/zgloszenie"
             className="rounded bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800"
@@ -110,6 +140,47 @@ export default function SubmissionsListPage() {
         ) : null}
       </div>
 
+      {isAdmin ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setUnassignedOnly(false);
+              setArchived(false);
+            }}
+            className={`rounded px-3 py-1.5 text-xs font-medium ${
+              !unassignedOnly && !archived ? 'bg-neutral-900 text-white' : 'border border-neutral-300'
+            }`}
+          >
+            Wszystkie aktywne
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUnassignedOnly(true);
+              setArchived(false);
+            }}
+            className={`rounded px-3 py-1.5 text-xs font-medium ${
+              unassignedOnly && !archived ? 'bg-neutral-900 text-white' : 'border border-neutral-300'
+            }`}
+          >
+            Bez artysty
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUnassignedOnly(false);
+              setArchived(true);
+            }}
+            className={`rounded px-3 py-1.5 text-xs font-medium ${
+              archived ? 'bg-neutral-900 text-white' : 'border border-neutral-300'
+            }`}
+          >
+            Archiwum
+          </button>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -118,7 +189,7 @@ export default function SubmissionsListPage() {
             statusFilter === 'ALL' ? 'bg-neutral-900 text-white' : 'border border-neutral-300'
           }`}
         >
-          Wszystkie ({items.length})
+          Status: wszystkie ({items.length})
         </button>
         {SUBMISSION_STATUSES.map((s) => {
           const count = items.filter((i) => i.status === s).length;
@@ -146,18 +217,7 @@ export default function SubmissionsListPage() {
       ) : null}
 
       {!loading && !error && filtered.length === 0 ? (
-        <p className="text-neutral-600">
-          {items.length === 0
-            ? canCreate
-              ? 'Brak zgłoszeń. '
-              : 'Brak przypisanych zgłoszeń.'
-            : 'Brak zgłoszeń w wybranym statusie.'}
-          {items.length === 0 && canCreate ? (
-            <Link href="/zgloszenie" className="underline">
-              Utwórz pierwsze
-            </Link>
-          ) : null}
-        </p>
+        <p className="text-neutral-600">Brak zgłoszeń w tym widoku.</p>
       ) : null}
 
       <ul className="flex flex-col gap-3">
@@ -172,10 +232,12 @@ export default function SubmissionsListPage() {
             [item.client?.firstName, item.client?.lastName].filter(Boolean).join(' ') ||
             item.client?.email ||
             '—';
-          const deletable =
-            user?.role === 'ADMIN' ||
-            (user?.role === 'CLIENT' &&
-              (item.status === 'NEW' || item.status === 'CANCELLED' || item.status === 'REJECTED'));
+          const price =
+            item.finalPricePln != null
+              ? `${item.finalPricePln} zł`
+              : item.estimateMinPln != null && item.estimateMaxPln != null
+                ? `ok. ${item.estimateMinPln}–${item.estimateMaxPln} zł`
+                : null;
 
           return (
             <li key={item.id} className="rounded border border-neutral-200 px-4 py-3">
@@ -192,9 +254,11 @@ export default function SubmissionsListPage() {
                 <p className="mt-2 text-xs text-neutral-500">
                   {COLOR_MODE_LABELS[item.colorMode]} · {item.size}
                   {showClient ? ` · klient: ${clientName}` : ` · artysta: ${artistName}`}
+                  {price ? ` · ${price}` : ''}
+                  {!item.preferredArtistId && isAdmin ? ' · pula' : ''}
                 </p>
               </Link>
-              {deletable ? (
+              {item.canDelete && !archived ? (
                 <div className="mt-3 flex justify-end">
                   <button
                     type="button"
@@ -202,7 +266,7 @@ export default function SubmissionsListPage() {
                     onClick={() => void onDelete(item.id)}
                     className="text-xs text-red-700 underline disabled:opacity-50"
                   >
-                    {busyId === item.id ? 'Usuwanie…' : 'Usuń'}
+                    {busyId === item.id ? '…' : 'Usuń / archiwizuj'}
                   </button>
                 </div>
               ) : null}

@@ -37,9 +37,9 @@
 
 - [x] FR-07 Formularz zgłoszenia *(wysoki)*
 - [x] FR-08 Zdjęcia referencyjne (typ/rozmiar) *(wysoki)*
-- [ ] FR-09 Kalkulator widełek cenowych *(wysoki)*
-- [ ] FR-10 Wątek wiadomości klient–artysta *(wysoki)*
-- [ ] FR-11 Wycena ostateczna + akceptacja *(wysoki)*
+- [x] FR-09 Kalkulator widełek cenowych *(wysoki)*
+- [x] FR-10 Wątek wiadomości klient–artysta *(wysoki)*
+- [x] FR-11 Wycena ostateczna + akceptacja *(wysoki)*
 - [x] FR-12 Statusy zgłoszenia *(wysoki)*
 
 ### Terminy i rezerwacje

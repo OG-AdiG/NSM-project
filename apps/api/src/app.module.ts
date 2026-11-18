@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PricingModule } from './pricing/pricing.module';
 import { StorageModule } from './storage/storage.module';
 import { SubmissionsModule } from './submissions/submissions.module';
 
@@ -19,6 +20,7 @@ import { SubmissionsModule } from './submissions/submissions.module';
     MailModule,
     AuthModule,
     ArtistsModule,
+    PricingModule,
     SubmissionsModule,
     HealthModule,
   ],

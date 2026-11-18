@@ -24,7 +24,10 @@ export const USER_ROLES = ['CLIENT', 'ARTIST', 'ADMIN'] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
 
-/** Dozwolone przejścia statusów (FR-12) — wycena liczbowa dojdzie w FR-11 */
+/**
+ * Przejścia przez ogólny PATCH /status.
+ * Wycena (→ QUOTED) i odrzucenie (→ REJECTED) idą osobnymi endpointami z kwotą / powodem.
+ */
 export const SUBMISSION_STATUS_TRANSITIONS: Record<
   UserRole,
   Partial<Record<SubmissionStatus, readonly SubmissionStatus[]>>
@@ -34,15 +37,12 @@ export const SUBMISSION_STATUS_TRANSITIONS: Record<
     QUOTED: ['ACCEPTED', 'CANCELLED'],
   },
   ARTIST: {
-    NEW: ['QUOTED', 'REJECTED'],
-    QUOTED: ['REJECTED'],
     ACCEPTED: ['COMPLETED'],
   },
   ADMIN: {
-    NEW: ['QUOTED', 'REJECTED', 'CANCELLED'],
-    QUOTED: ['ACCEPTED', 'REJECTED', 'CANCELLED'],
+    NEW: ['CANCELLED'],
+    QUOTED: ['ACCEPTED', 'CANCELLED'],
     ACCEPTED: ['COMPLETED', 'CANCELLED'],
-    COMPLETED: [],
     REJECTED: ['NEW'],
     CANCELLED: ['NEW'],
   },
@@ -59,10 +59,26 @@ export function canEditSubmissionPhotos(status: SubmissionStatus): boolean {
   return status === 'NEW';
 }
 
-export function canDeleteSubmission(role: UserRole, status: SubmissionStatus): boolean {
-  if (role === 'ADMIN') return true;
-  if (role === 'CLIENT') return status === 'NEW' || status === 'CANCELLED' || status === 'REJECTED';
+/** Twarde usunięcie (plików + rekordu) — tylko wczesne statusy */
+export function canHardDeleteSubmission(role: UserRole, status: SubmissionStatus): boolean {
+  if (role === 'ARTIST') return false;
+  return status === 'NEW' || status === 'CANCELLED' || status === 'REJECTED';
+}
+
+/** Soft-delete / archiwum — po wycenie lub akceptacji */
+export function canArchiveSubmission(role: UserRole, status: SubmissionStatus): boolean {
+  if (role === 'ARTIST') return false;
+  if (role === 'ADMIN') {
+    return status === 'QUOTED' || status === 'ACCEPTED' || status === 'COMPLETED';
+  }
+  if (role === 'CLIENT') {
+    return status === 'QUOTED' || status === 'ACCEPTED';
+  }
   return false;
+}
+
+export function canDeleteSubmission(role: UserRole, status: SubmissionStatus): boolean {
+  return canHardDeleteSubmission(role, status) || canArchiveSubmission(role, status);
 }
 
 export const COLOR_MODES = ['BLACK_GREY', 'COLOR'] as const;
@@ -125,3 +141,80 @@ export const REFERENCE_PHOTO = {
   maxBytes: 5 * 1024 * 1024,
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'] as const,
 } as const;
+
+export type PriceEstimateInput = {
+  size: string;
+  style: string;
+  colorMode: ColorMode;
+  bodyPart: string;
+};
+
+export type PriceEstimate = {
+  minPln: number;
+  maxPln: number;
+  suggestedSessions: number;
+  breakdown: string[];
+};
+
+/** Kalkulator widełek (FR-09) — reguły orientacyjne, parametry admina w FR-27 */
+export function estimateTattooPrice(input: PriceEstimateInput): PriceEstimate {
+  const size = input.size.toLowerCase();
+  const style = input.style.toLowerCase();
+  const part = input.bodyPart.toLowerCase();
+  const breakdown: string[] = [];
+
+  let base = 350;
+  if (size.includes('mały') || size.includes('do 5')) {
+    base = 250;
+    breakdown.push('Rozmiar mały: baza 250 zł');
+  } else if (size.includes('średni') || size.includes('5–15') || size.includes('5-15')) {
+    base = 450;
+    breakdown.push('Rozmiar średni: baza 450 zł');
+  } else if (size.includes('rękaw') || size.includes('większa')) {
+    base = 1200;
+    breakdown.push('Duża powierzchnia / rękaw: baza 1200 zł');
+  } else if (size.includes('duży') || size.includes('powyżej')) {
+    base = 800;
+    breakdown.push('Rozmiar duży: baza 800 zł');
+  } else {
+    breakdown.push('Rozmiar niestandardowy: baza 350 zł');
+  }
+
+  let styleMult = 1;
+  if (style.includes('realizm')) {
+    styleMult = 1.45;
+    breakdown.push('Styl realizm: +45%');
+  } else if (style.includes('blackwork')) {
+    styleMult = 1.25;
+    breakdown.push('Styl blackwork: +25%');
+  } else if (style.includes('neo') || style.includes('tradyc')) {
+    styleMult = 1.2;
+    breakdown.push('Styl tradycyjny/neo: +20%');
+  } else if (style.includes('fineline') || style.includes('minimal')) {
+    styleMult = 1.05;
+    breakdown.push('Styl fineline/minimal: +5%');
+  } else if (style.includes('botanic') || style.includes('geometr')) {
+    styleMult = 1.15;
+    breakdown.push('Styl botaniczny/geometryczny: +15%');
+  }
+
+  let colorMult = input.colorMode === 'COLOR' ? 1.2 : 1;
+  if (input.colorMode === 'COLOR') breakdown.push('Kolor: +20%');
+  else breakdown.push('Czerń/szarość: bez dopłaty');
+
+  let partMult = 1;
+  if (part.includes('żeb') || part.includes('szyj') || part.includes('uch') || part.includes('dłoń') || part.includes('kostk')) {
+    partMult = 1.15;
+    breakdown.push('Miejsce trudniejsze technicznie: +15%');
+  } else if (part.includes('plec') || part.includes('klatk') || part.includes('udo')) {
+    partMult = 1.1;
+    breakdown.push('Większa okolica: +10%');
+  }
+
+  const mid = Math.round(base * styleMult * colorMult * partMult);
+  const minPln = Math.round(mid * 0.85 / 10) * 10;
+  const maxPln = Math.round(mid * 1.25 / 10) * 10;
+  const suggestedSessions = maxPln >= 1500 ? 3 : maxPln >= 900 ? 2 : 1;
+
+  return { minPln, maxPln, suggestedSessions, breakdown };
+}

@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   BODY_PART_OPTIONS,
   COLOR_MODE_LABELS,
   COLOR_MODES,
+  estimateTattooPrice,
   REFERENCE_PHOTO,
   SIZE_OPTIONS,
   STYLE_OPTIONS,
@@ -37,6 +38,11 @@ export default function NewSubmissionPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  const estimate = useMemo(() => {
+    if (!bodyPart.trim() || !size.trim() || !style.trim()) return null;
+    return estimateTattooPrice({ bodyPart, size, style, colorMode });
+  }, [bodyPart, size, style, colorMode]);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -227,6 +233,19 @@ export default function NewSubmissionPage() {
             ))}
           </select>
         </label>
+
+        {estimate ? (
+          <div className="rounded border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm">
+            <p className="font-medium">Szacunkowe widełki (FR-09)</p>
+            <p className="mt-1 text-lg font-semibold">
+              {estimate.minPln}–{estimate.maxPln} zł
+            </p>
+            <p className="mt-1 text-neutral-600">
+              Orientacyjnie ok. {estimate.suggestedSessions}{' '}
+              {estimate.suggestedSessions === 1 ? 'sesja' : 'sesje'}. Ostateczną wycenę poda artysta.
+            </p>
+          </div>
+        ) : null}
 
         <div className="flex flex-col gap-2 text-sm">
           <span className="font-medium">

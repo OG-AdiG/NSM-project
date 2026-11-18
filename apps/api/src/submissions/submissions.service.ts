@@ -2,21 +2,30 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Role, SubmissionStatus } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { Prisma, Role, SubmissionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import { REFERENCE_PHOTO } from '../storage/photo-limits';
 import { StorageService } from '../storage/storage.service';
+import { estimateTattooPrice } from '../pricing/estimate';
 import { AuthUser } from '../auth/types';
 import { AssignArtistDto } from './dto/assign-artist.dto';
+import { CreateMessageDto } from './dto/create-message.dto';
+import { CreateQuoteDto } from './dto/create-quote.dto';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
+import { RejectSubmissionDto } from './dto/reject-submission.dto';
 import { UpdateSubmissionStatusDto } from './dto/update-status.dto';
 import {
   allowedNextStatuses,
-  canDeleteSubmission,
+  canArchive,
+  canDeleteOrArchive,
   canEditPhotos,
+  canHardDelete,
 } from './submission-status';
 
 const submissionInclude = {
@@ -25,6 +34,7 @@ const submissionInclude = {
       id: true,
       firstName: true,
       lastName: true,
+      email: true,
       artistProfile: { select: { displayName: true, styles: true } },
     },
   },
@@ -47,12 +57,24 @@ const clientSelect = {
   lastName: true,
 } as const;
 
+export type ListFilters = {
+  unassigned?: boolean;
+  archived?: boolean;
+};
+
 @Injectable()
 export class SubmissionsService {
+  private readonly logger = new Logger(SubmissionsService.name);
+  private readonly webUrl: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
-  ) {}
+    private readonly mail: MailService,
+    private readonly config: ConfigService,
+  ) {
+    this.webUrl = this.config.get<string>('WEB_URL', 'http://localhost:3000');
+  }
 
   async create(user: AuthUser, dto: CreateSubmissionDto) {
     if (user.role !== Role.CLIENT && user.role !== Role.ADMIN) {
@@ -69,6 +91,13 @@ export class SubmissionsService {
       await this.assertActiveArtist(dto.preferredArtistId);
     }
 
+    const estimate = estimateTattooPrice({
+      size: dto.size,
+      style: dto.style,
+      colorMode: dto.colorMode,
+      bodyPart: dto.bodyPart,
+    });
+
     const created = await this.prisma.submission.create({
       data: {
         clientId: user.id,
@@ -79,50 +108,58 @@ export class SubmissionsService {
         style: dto.style.trim(),
         colorMode: dto.colorMode,
         status: SubmissionStatus.NEW,
+        estimateMinPln: estimate.minPln,
+        estimateMaxPln: estimate.maxPln,
+        sessionCount: estimate.suggestedSessions,
       },
       include: {
         ...submissionInclude,
         client: { select: clientSelect },
       },
     });
+
+    void this.notifyAfterCreate(created).catch((err) =>
+      this.logger.warn(`Powiadomienie po create: ${String(err)}`),
+    );
+
     return this.enrich(user, created);
   }
 
-  async listMine(user: AuthUser) {
-    if (user.role === Role.ADMIN) {
-      const rows = await this.prisma.submission.findMany({
-        orderBy: { createdAt: 'desc' },
-        include: {
-          ...submissionInclude,
-          client: { select: clientSelect },
-        },
-      });
-      return Promise.all(rows.map((r) => this.withSignedPhotoUrls(r)));
+  async listMine(user: AuthUser, filters: ListFilters = {}) {
+    const where: Prisma.SubmissionWhereInput = {};
+
+    if (filters.archived) {
+      if (user.role !== Role.ADMIN) {
+        throw new ForbiddenException('Archiwum dostępne tylko dla administratora');
+      }
+      where.deletedAt = { not: null };
+    } else {
+      where.deletedAt = null;
     }
 
-    if (user.role === Role.ARTIST) {
-      // Tylko zgłoszenia przypisane do tego artysty (bez puli „bez preferencji”)
-      const rows = await this.prisma.submission.findMany({
-        where: { preferredArtistId: user.id },
-        orderBy: { createdAt: 'desc' },
-        include: {
-          ...submissionInclude,
-          client: { select: clientSelect },
-        },
-      });
-      return Promise.all(rows.map((r) => this.withSignedPhotoUrls(r)));
+    if (user.role === Role.ADMIN) {
+      if (filters.unassigned) {
+        where.preferredArtistId = null;
+      }
+    } else if (user.role === Role.ARTIST) {
+      where.preferredArtistId = user.id;
+    } else {
+      where.clientId = user.id;
     }
 
     const rows = await this.prisma.submission.findMany({
-      where: { clientId: user.id },
+      where,
       orderBy: { createdAt: 'desc' },
-      include: submissionInclude,
+      include: {
+        ...submissionInclude,
+        client: { select: clientSelect },
+      },
     });
-    return Promise.all(rows.map((r) => this.withSignedPhotoUrls(r)));
+    return Promise.all(rows.map((r) => this.enrich(user, r)));
   }
 
   async getOne(user: AuthUser, id: string) {
-    const submission = await this.findOrFail(id);
+    const submission = await this.findOrFail(id, user.role === Role.ADMIN);
     this.assertCanView(user, submission.clientId, submission.preferredArtistId);
     return this.enrich(user, submission);
   }
@@ -138,7 +175,7 @@ export class SubmissionsService {
     const allowed = allowedNextStatuses(user.role, submission.status);
     if (!allowed.includes(dto.status)) {
       throw new BadRequestException(
-        `Nie można zmienić statusu z „${submission.status}” na „${dto.status}”`,
+        `Nie można zmienić statusu z „${submission.status}” na „${dto.status}”. Wycena i odrzucenie mają osobne akcje.`,
       );
     }
 
@@ -150,6 +187,107 @@ export class SubmissionsService {
         client: { select: clientSelect },
       },
     });
+    return this.enrich(user, updated);
+  }
+
+  async createQuote(user: AuthUser, id: string, dto: CreateQuoteDto) {
+    const submission = await this.findOrFail(id);
+    this.assertCanView(user, submission.clientId, submission.preferredArtistId);
+
+    if (user.role === Role.CLIENT) {
+      throw new ForbiddenException('Klient nie wystawia wyceny');
+    }
+    if (user.role === Role.ARTIST && submission.preferredArtistId !== user.id) {
+      throw new ForbiddenException('Możesz wyceniać tylko swoje zgłoszenia');
+    }
+    if (
+      submission.status !== SubmissionStatus.NEW &&
+      submission.status !== SubmissionStatus.QUOTED
+    ) {
+      throw new BadRequestException('Wycenę można wystawić tylko dla zgłoszenia nowego lub już wycenionego');
+    }
+    if (dto.estimateMinPln != null && dto.estimateMaxPln != null && dto.estimateMinPln > dto.estimateMaxPln) {
+      throw new BadRequestException('Widełki: minimum nie może być większe niż maksimum');
+    }
+
+    const updated = await this.prisma.submission.update({
+      where: { id },
+      data: {
+        status: SubmissionStatus.QUOTED,
+        finalPricePln: dto.finalPricePln,
+        sessionCount: dto.sessionCount ?? submission.sessionCount,
+        estimateMinPln: dto.estimateMinPln ?? submission.estimateMinPln,
+        estimateMaxPln: dto.estimateMaxPln ?? submission.estimateMaxPln,
+        quoteNote: dto.quoteNote?.trim() || null,
+      },
+      include: {
+        ...submissionInclude,
+        client: { select: clientSelect },
+      },
+    });
+
+    const link = `${this.webUrl}/zgloszenia/${id}`;
+    try {
+      await this.mail.sendQuoteEmail(
+        updated.client.email,
+        link,
+        updated.finalPricePln!,
+        updated.quoteNote,
+      );
+    } catch {
+      this.logger.warn('Nie wysłano maila z wyceną');
+    }
+
+    return this.enrich(user, updated);
+  }
+
+  async reject(user: AuthUser, id: string, dto: RejectSubmissionDto) {
+    const submission = await this.findOrFail(id);
+    this.assertCanView(user, submission.clientId, submission.preferredArtistId);
+
+    if (user.role === Role.CLIENT) {
+      throw new ForbiddenException('Klient nie odrzuca zgłoszeń — użyj anulowania');
+    }
+    if (user.role === Role.ARTIST && submission.preferredArtistId !== user.id) {
+      throw new ForbiddenException('Możesz odrzucać tylko swoje zgłoszenia');
+    }
+    if (
+      submission.status !== SubmissionStatus.NEW &&
+      submission.status !== SubmissionStatus.QUOTED
+    ) {
+      throw new BadRequestException('Można odrzucić tylko zgłoszenie nowe lub wycenione');
+    }
+
+    const reason = dto.reason.trim();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.submissionMessage.create({
+        data: {
+          submissionId: id,
+          authorId: user.id,
+          body: `Odrzucenie: ${reason}`,
+          system: true,
+        },
+      });
+      return tx.submission.update({
+        where: { id },
+        data: {
+          status: SubmissionStatus.REJECTED,
+          rejectionReason: reason,
+        },
+        include: {
+          ...submissionInclude,
+          client: { select: clientSelect },
+        },
+      });
+    });
+
+    const link = `${this.webUrl}/zgloszenia/${id}`;
+    try {
+      await this.mail.sendRejectionEmail(updated.client.email, link, reason);
+    } catch {
+      this.logger.warn('Nie wysłano maila o odrzuceniu');
+    }
+
     return this.enrich(user, updated);
   }
 
@@ -167,7 +305,9 @@ export class SubmissionsService {
     }
 
     const preferredArtistId =
-      dto.preferredArtistId === undefined || dto.preferredArtistId === null || dto.preferredArtistId === ''
+      dto.preferredArtistId === undefined ||
+      dto.preferredArtistId === null ||
+      dto.preferredArtistId === ''
         ? null
         : dto.preferredArtistId;
 
@@ -183,6 +323,21 @@ export class SubmissionsService {
         client: { select: clientSelect },
       },
     });
+
+    if (preferredArtistId && updated.preferredArtist?.email) {
+      const link = `${this.webUrl}/zgloszenia/${id}`;
+      const summary = `${updated.style} · ${updated.bodyPart}`;
+      try {
+        await this.mail.sendAssignedSubmissionEmail(
+          updated.preferredArtist.email,
+          link,
+          summary,
+        );
+      } catch {
+        this.logger.warn('Nie wysłano maila o przypisaniu');
+      }
+    }
+
     return this.enrich(user, updated);
   }
 
@@ -193,23 +348,131 @@ export class SubmissionsService {
     if (user.role === Role.CLIENT && user.id !== submission.clientId) {
       throw new ForbiddenException('Brak dostępu do tego zgłoszenia');
     }
-    if (!canDeleteSubmission(user.role, submission.status)) {
-      throw new ForbiddenException('Tego zgłoszenia nie można usunąć w obecnym statusie');
-    }
-    if (user.role === Role.ARTIST) {
-      throw new ForbiddenException('Artysta nie może usuwać zgłoszeń — użyj odrzucenia');
+    if (!canDeleteOrArchive(user.role, submission.status)) {
+      throw new ForbiddenException('Tego zgłoszenia nie można usunąć / zarchiwizować w obecnym statusie');
     }
 
-    for (const photo of submission.photos) {
-      try {
-        await this.storage.deleteObject(photo.objectKey);
-      } catch {
-        // kontynuuj usuwanie rekordu
+    if (canHardDelete(user.role, submission.status)) {
+      for (const photo of submission.photos) {
+        try {
+          await this.storage.deleteObject(photo.objectKey);
+        } catch {
+          // ignore
+        }
+      }
+      await this.prisma.submission.delete({ where: { id } });
+      return { message: 'Zgłoszenie usunięte', mode: 'hard' as const };
+    }
+
+    if (canArchive(user.role, submission.status)) {
+      await this.prisma.submission.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+      return { message: 'Zgłoszenie przeniesione do archiwum', mode: 'archive' as const };
+    }
+
+    throw new ForbiddenException('Brak uprawnień do usunięcia');
+  }
+
+  async restore(user: AuthUser, id: string) {
+    if (user.role !== Role.ADMIN) {
+      throw new ForbiddenException('Tylko administrator może przywracać z archiwum');
+    }
+    const submission = await this.prisma.submission.findUnique({
+      where: { id },
+      include: {
+        ...submissionInclude,
+        client: { select: clientSelect },
+      },
+    });
+    if (!submission || !submission.deletedAt) {
+      throw new NotFoundException('Nie znaleziono zgłoszenia w archiwum');
+    }
+    const updated = await this.prisma.submission.update({
+      where: { id },
+      data: { deletedAt: null },
+      include: {
+        ...submissionInclude,
+        client: { select: clientSelect },
+      },
+    });
+    return this.enrich(user, updated);
+  }
+
+  async listMessages(user: AuthUser, id: string) {
+    const submission = await this.findOrFail(id, user.role === Role.ADMIN);
+    this.assertCanView(user, submission.clientId, submission.preferredArtistId);
+
+    return this.prisma.submissionMessage.findMany({
+      where: { submissionId: id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        author: {
+          select: { id: true, firstName: true, lastName: true, role: true, email: true },
+        },
+      },
+    });
+  }
+
+  async addMessage(user: AuthUser, id: string, dto: CreateMessageDto) {
+    const submission = await this.findOrFail(id);
+    this.assertCanView(user, submission.clientId, submission.preferredArtistId);
+
+    if (
+      submission.status === SubmissionStatus.COMPLETED ||
+      submission.status === SubmissionStatus.CANCELLED
+    ) {
+      throw new BadRequestException('Nie można pisać w zamkniętym zgłoszeniu');
+    }
+
+    const message = await this.prisma.submissionMessage.create({
+      data: {
+        submissionId: id,
+        authorId: user.id,
+        body: dto.body.trim(),
+        system: false,
+      },
+      include: {
+        author: {
+          select: { id: true, firstName: true, lastName: true, role: true, email: true },
+        },
+      },
+    });
+
+    const link = `${this.webUrl}/zgloszenia/${id}`;
+    const recipients = new Set<string>();
+    if (submission.client.email && submission.clientId !== user.id) {
+      recipients.add(submission.client.email);
+    }
+    if (
+      submission.preferredArtist?.email &&
+      submission.preferredArtistId &&
+      submission.preferredArtistId !== user.id
+    ) {
+      recipients.add(submission.preferredArtist.email);
+    }
+    if (user.role !== Role.ADMIN) {
+      const admins = await this.prisma.user.findMany({
+        where: { role: Role.ADMIN },
+        select: { email: true },
+      });
+      // nie spamuj adminów przy każdej wiadomości — tylko gdy brak artysty
+      if (!submission.preferredArtistId) {
+        for (const a of admins) recipients.add(a.email);
       }
     }
 
-    await this.prisma.submission.delete({ where: { id } });
-    return { message: 'Zgłoszenie usunięte' };
+    const preview = message.body.slice(0, 200);
+    for (const to of recipients) {
+      try {
+        await this.mail.sendSubmissionMessageEmail(to, link, preview);
+      } catch {
+        this.logger.warn(`Nie wysłano maila wiadomości do ${to}`);
+      }
+    }
+
+    return message;
   }
 
   async addPhoto(
@@ -221,8 +484,8 @@ export class SubmissionsService {
       throw new BadRequestException('Nie przesłano pliku');
     }
 
-    const submission = await this.prisma.submission.findUnique({
-      where: { id: submissionId },
+    const submission = await this.prisma.submission.findFirst({
+      where: { id: submissionId, deletedAt: null },
       include: { photos: true },
     });
     if (!submission) {
@@ -274,7 +537,7 @@ export class SubmissionsService {
       where: { id: photoId, submissionId },
       include: { submission: true },
     });
-    if (!photo) {
+    if (!photo || photo.submission.deletedAt) {
       throw new NotFoundException('Nie znaleziono zdjęcia');
     }
     this.assertCanEditPhotos(user, photo.submission.clientId, photo.submission.status);
@@ -282,15 +545,47 @@ export class SubmissionsService {
     try {
       await this.storage.deleteObject(photo.objectKey);
     } catch {
-      // rekord i tak usuwamy – plik mógł już nie istnieć
+      // ignore
     }
     await this.prisma.referencePhoto.delete({ where: { id: photo.id } });
     return { message: 'Zdjęcie usunięte' };
   }
 
-  private async findOrFail(id: string) {
-    const submission = await this.prisma.submission.findUnique({
-      where: { id },
+  private async notifyAfterCreate(
+    created: {
+      id: string;
+      style: string;
+      bodyPart: string;
+      preferredArtistId: string | null;
+      preferredArtist: { email: string } | null;
+    },
+  ) {
+    const link = `${this.webUrl}/zgloszenia/${created.id}`;
+    const summary = `${created.style} · ${created.bodyPart}`;
+
+    if (!created.preferredArtistId) {
+      const admins = await this.prisma.user.findMany({
+        where: { role: Role.ADMIN },
+        select: { email: true },
+      });
+      for (const admin of admins) {
+        await this.mail.sendUnassignedSubmissionEmail(admin.email, link, summary);
+      }
+      return;
+    }
+
+    if (created.preferredArtist?.email) {
+      await this.mail.sendAssignedSubmissionEmail(
+        created.preferredArtist.email,
+        link,
+        summary,
+      );
+    }
+  }
+
+  private async findOrFail(id: string, includeArchived = false) {
+    const submission = await this.prisma.submission.findFirst({
+      where: includeArchived ? { id } : { id, deletedAt: null },
       include: {
         ...submissionInclude,
         client: { select: clientSelect },
@@ -331,21 +626,48 @@ export class SubmissionsService {
     throw new ForbiddenException('Tylko właściciel zgłoszenia może zarządzać zdjęciami');
   }
 
-  private enrich<T extends { status: SubmissionStatus; photos: Array<{
-    id: string;
-    objectKey: string;
-    fileName: string;
-    mimeType: string;
-    sizeBytes: number;
-    createdAt: Date;
-  }> }>(user: AuthUser, submission: T) {
-    return this.withSignedPhotoUrls(submission).then((row) => ({
-      ...row,
+  private async enrich<
+    T extends {
+      status: SubmissionStatus;
+      preferredArtistId: string | null;
+      deletedAt: Date | null;
+      photos: Array<{
+        id: string;
+        objectKey: string;
+        fileName: string;
+        mimeType: string;
+        sizeBytes: number;
+        createdAt: Date;
+      }>;
+    },
+  >(user: AuthUser, submission: T) {
+    const withPhotos = await this.withSignedPhotoUrls(submission);
+    const canQuote =
+      (user.role === Role.ARTIST || user.role === Role.ADMIN) &&
+      (submission.status === SubmissionStatus.NEW ||
+        submission.status === SubmissionStatus.QUOTED) &&
+      (user.role === Role.ADMIN || submission.preferredArtistId === user.id);
+    const canReject =
+      (user.role === Role.ARTIST || user.role === Role.ADMIN) &&
+      (submission.status === SubmissionStatus.NEW ||
+        submission.status === SubmissionStatus.QUOTED) &&
+      (user.role === Role.ADMIN || submission.preferredArtistId === user.id);
+
+    return {
+      ...withPhotos,
       allowedStatuses: allowedNextStatuses(user.role, submission.status),
-      canDelete: canDeleteSubmission(user.role, submission.status),
-      canEditPhotos: canEditPhotos(submission.status) && (user.role === Role.CLIENT || user.role === Role.ADMIN),
-      canAssignArtist: user.role === Role.ADMIN,
-    }));
+      canDelete: canDeleteOrArchive(user.role, submission.status) && !submission.deletedAt,
+      canHardDelete: canHardDelete(user.role, submission.status),
+      canArchive: canArchive(user.role, submission.status),
+      canEditPhotos:
+        canEditPhotos(submission.status) &&
+        (user.role === Role.CLIENT || user.role === Role.ADMIN),
+      canAssignArtist: user.role === Role.ADMIN && !submission.deletedAt,
+      canQuote,
+      canReject,
+      canMessage: !submission.deletedAt && submission.status !== SubmissionStatus.COMPLETED,
+      isArchived: Boolean(submission.deletedAt),
+    };
   }
 
   private async withSignedPhotoUrls<

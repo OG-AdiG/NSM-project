@@ -66,9 +66,10 @@ model User {
   updatedAt       DateTime  @updatedAt
 
   tokens                 AuthToken[]
-  submissionsAsClient    Submission[] @relation("SubmissionClient")
-  submissionsAsArtist    Submission[] @relation("SubmissionArtist")
+  submissionsAsClient    Submission[]        @relation("SubmissionClient")
+  submissionsAsArtist    Submission[]        @relation("SubmissionArtist")
   artistProfile          ArtistProfile?
+  submissionMessages     SubmissionMessage[]
 }
 
 model AuthToken {
@@ -99,7 +100,7 @@ model ArtistProfile {
   updatedAt   DateTime @updatedAt
 }
 
-/// Zgłoszenie projektu tatuażu (FR-07, FR-12)
+/// Zgłoszenie projektu tatuażu (FR-07–FR-12)
 model Submission {
   id                String           @id @default(cuid())
   clientId          String
@@ -112,20 +113,27 @@ model Submission {
   style             String
   colorMode         ColorMode
   status            SubmissionStatus @default(NEW)
-  /// Widełki orientacyjne (FR-09) – uzupełniane później / kalkulatorem
+  /// Widełki orientacyjne (FR-09)
   estimateMinPln    Int?
   estimateMaxPln    Int?
   /// Wycena ostateczna (FR-11)
   finalPricePln     Int?
   sessionCount      Int?
+  quoteNote         String?
+  rejectionReason   String?
+  /// Soft-delete / archiwum (po ACCEPTED+ nie kasujemy twardo)
+  deletedAt         DateTime?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  photos ReferencePhoto[]
+  photos   ReferencePhoto[]
+  messages SubmissionMessage[]
 
   @@index([clientId])
   @@index([preferredArtistId])
   @@index([status])
+  @@index([deletedAt])
+  @@index([preferredArtistId, status])
 }
 
 /// Zdjęcia referencyjne (FR-08) – pliki w MinIO/S3
@@ -141,4 +149,20 @@ model ReferencePhoto {
   createdAt    DateTime   @default(now())
 
   @@index([submissionId])
+}
+
+/// Wątek wiadomości klient–artysta (FR-10)
+model SubmissionMessage {
+  id           String     @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  authorId     String
+  author       User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body         String
+  /// true = wpis systemowy (np. powód odrzucenia)
+  system       Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+
+  @@index([submissionId, createdAt])
+  @@index([authorId])
 }

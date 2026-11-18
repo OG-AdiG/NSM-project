@@ -7,10 +7,6 @@ export default function HomePage() {
       <h1 className="text-4xl font-semibold tracking-tight">
         System obsługi klientów i usług studia tatuażu
       </h1>
-      <p className="text-lg text-neutral-600">
-        Aplikacja webowa (moduł klienta + panel administratora). Backend:{' '}
-        <code className="rounded bg-neutral-200 px-1.5 py-0.5 text-sm">/api/health</code>
-      </p>
       <div className="flex flex-wrap gap-3">
         <Link
           href="/rejestracja"
@@ -28,10 +24,6 @@ export default function HomePage() {
           Moje konto
         </Link>
       </div>
-      <ul className="list-disc space-y-1 pl-5 text-neutral-700">
-        <li>Auth: rejestracja, weryfikacja e-mail, JWT, role (FR-01–FR-04)</li>
-        <li>Następne: zgłoszenia, wycena, rezerwacje…</li>
-      </ul>
     </main>
   );
 }

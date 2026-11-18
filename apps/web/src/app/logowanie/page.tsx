@@ -21,7 +21,7 @@ export default function LoginPage() {
   return (
     <AuthForm
       title="Logowanie"
-      subtitle="Zaloguj się do konta NSM (FR-02)."
+      subtitle="Zaloguj się do konta NSM."
       submitLabel="Zaloguj"
       onSubmit={async () => {
         const data = await apiFetch<LoginResponse>('/auth/login', {
@@ -29,17 +29,17 @@ export default function LoginPage() {
           body: JSON.stringify({ email, password }),
         });
         saveSession(data.accessToken, data.refreshToken, data.user);
-        router.push('/konto');
+        router.push('/zgloszenia');
       }}
       footer={
         <div className="flex flex-col gap-1">
           <span>
             Nie masz konta?{' '}
-            <Link href="/rejestracja" className="font-medium underline">
+            <Link href="/rejestracja" className="btn-text">
               Zarejestruj się
             </Link>
           </span>
-          <Link href="/przypomnij-haslo" className="underline">
+          <Link href="/przypomnij-haslo" className="btn-text">
             Nie pamiętam hasła
           </Link>
         </div>

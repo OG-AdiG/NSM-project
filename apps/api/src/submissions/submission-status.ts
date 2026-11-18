@@ -29,28 +29,14 @@ export function canEditPhotos(status: SubmissionStatus): boolean {
   return status === SubmissionStatus.NEW;
 }
 
-export function canHardDelete(role: Role, status: SubmissionStatus): boolean {
-  if (role === Role.ARTIST) return false;
-  return (
-    status === SubmissionStatus.NEW ||
-    status === SubmissionStatus.CANCELLED ||
-    status === SubmissionStatus.REJECTED
-  );
+/** Twarde usunięcie (z plikami) — tylko admin */
+export function canHardDelete(role: Role, _status: SubmissionStatus): boolean {
+  return role === Role.ADMIN;
 }
 
-export function canArchive(role: Role, status: SubmissionStatus): boolean {
-  if (role === Role.ARTIST) return false;
-  if (role === Role.ADMIN) {
-    return (
-      status === SubmissionStatus.QUOTED ||
-      status === SubmissionStatus.ACCEPTED ||
-      status === SubmissionStatus.COMPLETED
-    );
-  }
-  if (role === Role.CLIENT) {
-    return status === SubmissionStatus.QUOTED || status === SubmissionStatus.ACCEPTED;
-  }
-  return false;
+/** Soft-delete → archiwum — tylko admin */
+export function canArchive(role: Role, _status: SubmissionStatus): boolean {
+  return role === Role.ADMIN;
 }
 
 export function canDeleteOrArchive(role: Role, status: SubmissionStatus): boolean {

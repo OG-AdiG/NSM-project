@@ -59,22 +59,14 @@ export function canEditSubmissionPhotos(status: SubmissionStatus): boolean {
   return status === 'NEW';
 }
 
-/** Twarde usunięcie (plików + rekordu) — tylko wczesne statusy */
-export function canHardDeleteSubmission(role: UserRole, status: SubmissionStatus): boolean {
-  if (role === 'ARTIST') return false;
-  return status === 'NEW' || status === 'CANCELLED' || status === 'REJECTED';
+/** Twarde usunięcie (plików + rekordu) — tylko admin */
+export function canHardDeleteSubmission(role: UserRole, _status: SubmissionStatus): boolean {
+  return role === 'ADMIN';
 }
 
-/** Soft-delete / archiwum — po wycenie lub akceptacji */
-export function canArchiveSubmission(role: UserRole, status: SubmissionStatus): boolean {
-  if (role === 'ARTIST') return false;
-  if (role === 'ADMIN') {
-    return status === 'QUOTED' || status === 'ACCEPTED' || status === 'COMPLETED';
-  }
-  if (role === 'CLIENT') {
-    return status === 'QUOTED' || status === 'ACCEPTED';
-  }
-  return false;
+/** Soft-delete / archiwum — tylko admin */
+export function canArchiveSubmission(role: UserRole, _status: SubmissionStatus): boolean {
+  return role === 'ADMIN';
 }
 
 export function canDeleteSubmission(role: UserRole, status: SubmissionStatus): boolean {
@@ -141,6 +133,45 @@ export const REFERENCE_PHOTO = {
   maxBytes: 5 * 1024 * 1024,
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'] as const,
 } as const;
+
+export const SESSION_STATUSES = [
+  'AWAITING_DEPOSIT',
+  'CONFIRMED',
+  'COMPLETED',
+  'CANCELLED',
+  'NO_SHOW',
+] as const;
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+
+export const SESSION_STATUS_LABELS: Record<SessionStatus, string> = {
+  AWAITING_DEPOSIT: 'Oczekuje na zadatek',
+  CONFIRMED: 'Potwierdzona',
+  COMPLETED: 'Zakończona',
+  CANCELLED: 'Anulowana',
+  NO_SHOW: 'Nieobecność',
+};
+
+export const SESSION_TYPES = ['CONSULTATION', 'SESSION', 'TOUCH_UP'] as const;
+export type SessionType = (typeof SESSION_TYPES)[number];
+
+export const SESSION_TYPE_LABELS: Record<SessionType, string> = {
+  CONSULTATION: 'Konsultacja',
+  SESSION: 'Sesja',
+  TOUCH_UP: 'Poprawka',
+};
+
+export const WEEKDAY_LABELS: Record<number, string> = {
+  1: 'Poniedziałek',
+  2: 'Wtorek',
+  3: 'Środa',
+  4: 'Czwartek',
+  5: 'Piątek',
+  6: 'Sobota',
+  7: 'Niedziela',
+};
+
+/** Domyślna długość slotu (min) */
+export const DEFAULT_SLOT_MINUTES = 120;
 
 export type PriceEstimateInput = {
   size: string;

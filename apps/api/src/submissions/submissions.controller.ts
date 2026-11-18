@@ -127,8 +127,19 @@ export class SubmissionsController {
   @Delete(':id')
   @Roles(Role.CLIENT, Role.ADMIN)
   @ApiOperation({ summary: 'Usunięcie twarde lub soft-delete/archiwum' })
-  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.submissions.remove(user, id);
+  @ApiQuery({
+    name: 'mode',
+    required: false,
+    enum: ['hard', 'archive'],
+    description: 'hard = usuń na zawsze, archive = przenieś do archiwum',
+  })
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query('mode') mode?: string,
+  ) {
+    const resolved = mode === 'hard' || mode === 'archive' ? mode : undefined;
+    return this.submissions.remove(user, id, resolved);
   }
 
   @Get(':id/messages')

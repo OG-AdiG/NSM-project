@@ -15,9 +15,9 @@ function ResetInner() {
 
   if (!token) {
     return (
-      <main className="mx-auto max-w-md px-6 py-16">
-        <p className="text-red-700">Brak tokenu resetu w odnośniku.</p>
-        <Link href="/przypomnij-haslo" className="mt-4 inline-block underline">
+      <main className="page-narrow justify-center">
+        <p className="alert">Brak tokenu resetu w odnośniku.</p>
+        <Link href="/przypomnij-haslo" className="btn-text">
           Poproś o nowy link
         </Link>
       </main>
@@ -26,10 +26,10 @@ function ResetInner() {
 
   if (done) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6">
-        <h1 className="text-3xl font-semibold">Hasło zmienione</h1>
-        <p className="text-neutral-600">{message}</p>
-        <Link href="/logowanie" className="underline">
+      <main className="page-narrow justify-center">
+        <h1 className="display !text-3xl">Hasło zmienione</h1>
+        <p className="text-ink-muted">{message}</p>
+        <Link href="/logowanie" className="btn-primary self-start">
           Zaloguj się
         </Link>
       </main>

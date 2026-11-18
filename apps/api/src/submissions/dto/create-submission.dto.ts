@@ -1,6 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ColorMode } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class CreateSubmissionDto {
   @ApiProperty({ example: 'Chcę mały tatuaż z gałązką eukaliptusa na przedramieniu.' })
@@ -35,4 +43,30 @@ export class CreateSubmissionDto {
   @IsOptional()
   @IsString()
   preferredArtistId?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-12-15',
+    description: 'Preferowana data (YYYY-MM-DD lub ISO)',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Podaj poprawną preferowaną datę' })
+  preferredDate?: string;
+
+  @ApiPropertyOptional({ description: 'Preferowany początek slotu (ISO)' })
+  @ValidateIf((o: CreateSubmissionDto) => Boolean(o.preferredSlotStart || o.preferredSlotEnd))
+  @IsDateString({}, { message: 'Podaj poprawną godzinę początku' })
+  @IsOptional()
+  preferredSlotStart?: string;
+
+  @ApiPropertyOptional({ description: 'Preferowany koniec slotu (ISO)' })
+  @ValidateIf((o: CreateSubmissionDto) => Boolean(o.preferredSlotStart || o.preferredSlotEnd))
+  @IsDateString({}, { message: 'Podaj poprawną godzinę końca' })
+  @IsOptional()
+  preferredSlotEnd?: string;
+
+  @ApiPropertyOptional({ example: 'Najchętniej po 16:00' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  preferredTimeNote?: string;
 }

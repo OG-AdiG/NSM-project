@@ -10,6 +10,7 @@ import {
   SUBMISSION_STATUS_LABELS,
   SubmissionStatus,
 } from '@nsm/shared';
+import { BookingPanel } from '@/components/booking-panel';
 import { apiFetch, ApiError } from '@/lib/api';
 import { getAccessToken, getStoredUser, StoredUser } from '@/lib/auth-storage';
 
@@ -55,6 +56,10 @@ type SubmissionDetail = {
   sessionCount: number | null;
   quoteNote: string | null;
   rejectionReason: string | null;
+  preferredDate: string | null;
+  preferredSlotStart: string | null;
+  preferredSlotEnd: string | null;
+  preferredTimeNote: string | null;
   preferredArtistId?: string | null;
   preferredArtist?: {
     id: string;
@@ -71,6 +76,8 @@ type SubmissionDetail = {
   photos: Photo[];
   allowedStatuses: SubmissionStatus[];
   canDelete: boolean;
+  canHardDelete: boolean;
+  canArchive: boolean;
   canEditPhotos: boolean;
   canAssignArtist: boolean;
   canQuote: boolean;
@@ -132,6 +139,51 @@ export default function SubmissionDetailPage() {
     load().catch((err: Error) => setError(err.message));
   }, [load]);
 
+  // Odświeżanie wątku bez przeładowania strony (MVP: polling zamiast WebSocket)
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+
+    async function refreshMessages() {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const token = getAccessToken();
+      if (!token) return;
+      try {
+        const msgs = await apiFetch<Message[]>(`/submissions/${id}/messages`, {
+          accessToken: token,
+        });
+        if (!cancelled) {
+          setMessages((prev) => {
+            if (
+              prev.length === msgs.length &&
+              prev.every((m, i) => m.id === msgs[i]?.id && m.body === msgs[i]?.body)
+            ) {
+              return prev;
+            }
+            return msgs;
+          });
+        }
+      } catch {
+        // chwilowe błędy pollingu ignorujemy
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshMessages();
+    }, 2000);
+
+    const onVisibility = () => {
+      if (!document.hidden) void refreshMessages();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [id]);
+
   useEffect(() => {
     if (user?.role !== 'ADMIN') return;
     apiFetch<ArtistOption[]>('/artists')
@@ -152,6 +204,10 @@ export default function SubmissionDetailPage() {
         body: JSON.stringify({ status: next }),
       });
       setItem(updated);
+      await load();
+      if (next === 'ACCEPTED') {
+        router.push('/rezerwacje');
+      }
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Nie udało się zmienić statusu');
     } finally {
@@ -184,6 +240,7 @@ export default function SubmissionDetailPage() {
         }),
       });
       setItem(updated);
+      await load();
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Nie udało się wystawić wyceny');
     } finally {
@@ -257,18 +314,25 @@ export default function SubmissionDetailPage() {
     }
   }
 
-  async function onDelete() {
+  async function onRemove(mode: 'hard' | 'archive') {
     if (!item) return;
-    if (!confirm('Usunąć lub zarchiwizować to zgłoszenie?')) return;
+    const ok =
+      mode === 'archive'
+        ? confirm('Przenieść zgłoszenie do archiwum? Później admin może je przywrócić.')
+        : confirm('Trwale usunąć zgłoszenie wraz ze zdjęciami? Tej operacji nie cofniesz.');
+    if (!ok) return;
     const token = getAccessToken();
     if (!token) return;
     setPending(true);
     setActionError(null);
     try {
-      await apiFetch(`/submissions/${item.id}`, { method: 'DELETE', accessToken: token });
+      await apiFetch(`/submissions/${item.id}?mode=${mode}`, {
+        method: 'DELETE',
+        accessToken: token,
+      });
       router.push('/zgloszenia');
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Nie udało się usunąć');
+      setActionError(err instanceof ApiError ? err.message : 'Nie udało się wykonać operacji');
       setPending(false);
     }
   }
@@ -356,9 +420,9 @@ export default function SubmissionDetailPage() {
 
   if (error) {
     return (
-      <main className="mx-auto max-w-xl px-6 py-16">
-        <p className="text-red-700">{error}</p>
-        <Link href="/zgloszenia" className="mt-4 inline-block underline">
+      <main className="page-wide">
+        <p className="alert">{error}</p>
+        <Link href="/zgloszenia" className="btn-text mt-4">
           Wróć do listy
         </Link>
       </main>
@@ -366,103 +430,69 @@ export default function SubmissionDetailPage() {
   }
 
   if (!item) {
-    return <main className="mx-auto max-w-xl px-6 py-16 text-neutral-600">Ładowanie…</main>;
+    return (
+      <main className="page-wide">
+        <p className="lede">Ładowanie…</p>
+      </main>
+    );
   }
 
   const artistName =
     item.preferredArtist?.artistProfile?.displayName ||
     [item.preferredArtist?.firstName, item.preferredArtist?.lastName].filter(Boolean).join(' ') ||
-    'bez preferencji';
+    'Bez preferencji';
   const clientName =
     [item.client?.firstName, item.client?.lastName].filter(Boolean).join(' ') ||
     item.client?.email ||
     '—';
   const showClient = user?.role === 'ARTIST' || user?.role === 'ADMIN';
+  const created = new Date(item.createdAt).toLocaleDateString('pl-PL', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const preferredDate = item.preferredDate
+    ? new Date(item.preferredDate).toLocaleDateString('pl-PL')
+    : null;
+  const preferredSlot = item.preferredSlotStart
+    ? `${new Date(item.preferredSlotStart).toLocaleTimeString('pl-PL', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}${
+        item.preferredSlotEnd
+          ? `–${new Date(item.preferredSlotEnd).toLocaleTimeString('pl-PL', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}`
+          : ''
+      }`
+    : null;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-8 px-6 py-12">
-      <div>
-        <Link href="/zgloszenia" className="text-sm text-neutral-500 hover:text-neutral-800">
+    <main className="page-wide space-y-10">
+      <header className="border-b border-paper-line pb-8">
+        <Link href="/zgloszenia" className="back-link">
           ← Lista zgłoszeń
         </Link>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Zgłoszenie</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          Status: <strong>{SUBMISSION_STATUS_LABELS[item.status]}</strong>
-          {item.isArchived ? ' · archiwum' : ''}
-        </p>
-      </div>
-
-      <dl className="space-y-4 text-sm">
-        {showClient && item.client ? (
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <dt className="text-neutral-500">Klient</dt>
-            <dd className="font-medium">
-              {clientName}
-              <span className="ml-2 font-normal text-neutral-500">{item.client.email}</span>
-            </dd>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-display text-4xl tracking-tight text-ink sm:text-5xl">
+                {item.style}
+              </h1>
+              <span
+                className={`status-pill ${
+                  item.status === 'ACCEPTED' || item.status === 'QUOTED' ? 'status-pill-strong' : ''
+                }`}
+              >
+                {SUBMISSION_STATUS_LABELS[item.status]}
+              </span>
+              {item.isArchived ? <span className="status-pill">Archiwum</span> : null}
+            </div>
+            <p className="mt-2 text-lg text-ink-muted">{item.bodyPart}</p>
+            <p className="mt-2 text-sm text-ink-faint">Utworzono {created}</p>
           </div>
-        ) : null}
-        <div>
-          <dt className="text-neutral-500">Opis</dt>
-          <dd className="mt-1 whitespace-pre-wrap">{item.description}</dd>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <dt className="text-neutral-500">Miejsce</dt>
-            <dd className="font-medium">{item.bodyPart}</dd>
-          </div>
-          <div>
-            <dt className="text-neutral-500">Rozmiar</dt>
-            <dd className="font-medium">{item.size}</dd>
-          </div>
-          <div>
-            <dt className="text-neutral-500">Styl</dt>
-            <dd className="font-medium">{item.style}</dd>
-          </div>
-          <div>
-            <dt className="text-neutral-500">Kolor</dt>
-            <dd className="font-medium">{COLOR_MODE_LABELS[item.colorMode]}</dd>
-          </div>
-        </div>
-        <div>
-          <dt className="text-neutral-500">Preferowany artysta</dt>
-          <dd className="font-medium">{artistName}</dd>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <dt className="text-neutral-500">Widełki orientacyjne</dt>
-            <dd className="font-medium">
-              {item.estimateMinPln != null && item.estimateMaxPln != null
-                ? `${item.estimateMinPln}–${item.estimateMaxPln} zł`
-                : '—'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-neutral-500">Wycena ostateczna</dt>
-            <dd className="font-medium">
-              {item.finalPricePln != null ? `${item.finalPricePln} zł` : '—'}
-              {item.sessionCount != null ? ` · ${item.sessionCount} sesji` : ''}
-            </dd>
-          </div>
-        </div>
-        {item.quoteNote ? (
-          <div>
-            <dt className="text-neutral-500">Notatka do wyceny</dt>
-            <dd className="mt-1 whitespace-pre-wrap">{item.quoteNote}</dd>
-          </div>
-        ) : null}
-        {item.rejectionReason ? (
-          <div>
-            <dt className="text-neutral-500">Powód odrzucenia</dt>
-            <dd className="mt-1 whitespace-pre-wrap text-red-800">{item.rejectionReason}</dd>
-          </div>
-        ) : null}
-      </dl>
-
-      {!item.isArchived ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-medium">Akcje statusu</h2>
-          {item.allowedStatuses.length > 0 ? (
+          {!item.isArchived && item.allowedStatuses.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {item.allowedStatuses.map((s) => (
                 <button
@@ -470,58 +500,184 @@ export default function SubmissionDetailPage() {
                   type="button"
                   disabled={pending}
                   onClick={() => void onStatus(s)}
-                  className="rounded border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-100 disabled:opacity-50"
+                  className="btn-ghost"
                 >
                   {STATUS_ACTION_LABEL[s] ?? SUBMISSION_STATUS_LABELS[s]}
                 </button>
               ))}
             </div>
-          ) : (
-            <p className="text-sm text-neutral-600">Brak prostych zmian statusu — użyj wyceny lub odrzucenia.</p>
-          )}
-        </section>
-      ) : null}
+          ) : null}
+        </div>
+      </header>
+
+      <section>
+        <h2 className="section-title">Szczegóły</h2>
+        <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">
+          {item.description}
+        </p>
+        <dl className="mt-8 grid gap-6 sm:grid-cols-2">
+          <div>
+            <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Rozmiar</dt>
+            <dd className="mt-1.5 text-sm text-ink">{item.size}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Kolor</dt>
+            <dd className="mt-1.5 text-sm text-ink">{COLOR_MODE_LABELS[item.colorMode]}</dd>
+          </div>
+          {showClient && item.client ? (
+            <div>
+              <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Klient</dt>
+              <dd className="mt-1.5 text-sm text-ink">
+                {clientName}
+                <span className="mt-0.5 block text-ink-faint">{item.client.email}</span>
+              </dd>
+            </div>
+          ) : null}
+          <div>
+            <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Artysta</dt>
+            <dd className="mt-1.5 text-sm text-ink">{artistName}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Preferowany termin</dt>
+            <dd className="mt-1.5 text-sm text-ink">
+              {preferredDate || preferredSlot
+                ? [preferredDate, preferredSlot].filter(Boolean).join(' · ')
+                : '—'}
+              {item.preferredTimeNote ? (
+                <span className="mt-1 block text-ink-muted">{item.preferredTimeNote}</span>
+              ) : null}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Widełki</dt>
+            <dd className="mt-1.5 text-sm text-ink">
+              {item.estimateMinPln != null && item.estimateMaxPln != null
+                ? `${item.estimateMinPln}–${item.estimateMaxPln} zł`
+                : '—'}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.08em] text-ink-faint">Wycena</dt>
+            <dd className="mt-1.5 text-sm text-ink">
+              {item.finalPricePln != null ? `${item.finalPricePln} zł` : 'Brak wyceny'}
+              {item.sessionCount != null ? ` · ${item.sessionCount} sesji` : ''}
+            </dd>
+          </div>
+        </dl>
+        {item.quoteNote ? (
+          <div className="mt-6 border-l-2 border-ink/20 pl-4">
+            <p className="text-xs uppercase tracking-[0.08em] text-ink-faint">Notatka do wyceny</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-ink-muted">{item.quoteNote}</p>
+          </div>
+        ) : null}
+        {item.rejectionReason ? (
+          <div className="mt-6 border-l-2 border-ink/40 pl-4">
+            <p className="text-xs uppercase tracking-[0.08em] text-ink-faint">Powód odrzucenia</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{item.rejectionReason}</p>
+          </div>
+        ) : null}
+      </section>
+
+      <section>
+        <h2 className="section-title">
+          Zdjęcia referencyjne
+          <span className="ml-2 font-sans text-ink-faint">
+            {item.photos.length}/{REFERENCE_PHOTO.maxFiles}
+          </span>
+        </h2>
+        {item.photos.length > 0 ? (
+          <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {item.photos.map((p) => (
+              <li key={p.id} className="flex flex-col gap-2">
+                {p.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={p.url}
+                    alt={p.fileName}
+                    className="aspect-square w-full bg-paper-soft object-cover"
+                  />
+                ) : (
+                  <div className="flex aspect-square items-center justify-center bg-paper-soft text-xs text-ink-faint">
+                    Brak podglądu
+                  </div>
+                )}
+                {item.canEditPhotos ? (
+                  <button
+                    type="button"
+                    onClick={() => void onRemovePhoto(p.id)}
+                    className="btn-danger text-xs"
+                  >
+                    Usuń
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm text-ink-muted">Brak zdjęć.</p>
+        )}
+        {item.canEditPhotos && item.photos.length < REFERENCE_PHOTO.maxFiles ? (
+          <div className="mt-4">
+            <input
+              type="file"
+              accept={ACCEPT}
+              multiple
+              disabled={uploading}
+              onChange={(e) => {
+                void onUpload(e.target.files);
+                e.target.value = '';
+              }}
+              className="file-input"
+            />
+            <p className="mt-2 text-xs text-ink-faint">Do {MAX_MB} MB na plik.</p>
+          </div>
+        ) : null}
+      </section>
+
+      <BookingPanel
+        submissionId={item.id}
+        artistId={item.preferredArtist?.id ?? item.preferredArtistId}
+        status={item.status}
+        preferredDate={item.preferredDate}
+        preferredSlotStart={item.preferredSlotStart}
+      />
 
       {item.canQuote ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-medium">Wycena (FR-11)</h2>
-          <form onSubmit={onQuote} className="flex flex-col gap-3 text-sm">
-            <label className="flex flex-col gap-1">
-              <span className="font-medium">Cena ostateczna (zł)</span>
+        <section className="border-t border-paper-line pt-8">
+          <h2 className="section-title">Wycena</h2>
+          <form onSubmit={onQuote} className="mt-4 flex max-w-md flex-col gap-3">
+            <label className="field">
+              <span className="field-label">Cena ostateczna (zł)</span>
               <input
                 type="number"
                 min={50}
                 required
                 value={quotePrice}
                 onChange={(e) => setQuotePrice(e.target.value)}
-                className="rounded border border-neutral-300 px-3 py-2"
+                className="field-input"
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="font-medium">Liczba sesji</span>
+            <label className="field">
+              <span className="field-label">Liczba sesji</span>
               <input
                 type="number"
                 min={1}
                 max={20}
                 value={quoteSessions}
                 onChange={(e) => setQuoteSessions(e.target.value)}
-                className="rounded border border-neutral-300 px-3 py-2"
+                className="field-input"
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="font-medium">Notatka dla klienta</span>
+            <label className="field">
+              <span className="field-label">Notatka dla klienta</span>
               <textarea
                 rows={3}
                 value={quoteNote}
                 onChange={(e) => setQuoteNote(e.target.value)}
-                className="rounded border border-neutral-300 px-3 py-2"
+                className="field-input"
               />
             </label>
-            <button
-              type="submit"
-              disabled={pending}
-              className="self-start rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
+            <button type="submit" disabled={pending} className="btn-primary self-start">
               Wyślij wycenę
             </button>
           </form>
@@ -529,25 +685,21 @@ export default function SubmissionDetailPage() {
       ) : null}
 
       {item.canReject ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-medium">Odrzucenie</h2>
-          <form onSubmit={onReject} className="flex flex-col gap-3 text-sm">
-            <label className="flex flex-col gap-1">
-              <span className="font-medium">Powód (trafi do wątku i e-maila)</span>
+        <section className="border-t border-paper-line pt-8">
+          <h2 className="section-title">Odrzucenie</h2>
+          <form onSubmit={onReject} className="mt-4 flex max-w-md flex-col gap-3">
+            <label className="field">
+              <span className="field-label">Powód (trafi do wątku i e-maila)</span>
               <textarea
                 required
                 minLength={5}
                 rows={3}
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
-                className="rounded border border-neutral-300 px-3 py-2"
+                className="field-input"
               />
             </label>
-            <button
-              type="submit"
-              disabled={pending}
-              className="self-start rounded border border-red-300 px-4 py-2 text-sm text-red-800 hover:bg-red-50 disabled:opacity-50"
-            >
+            <button type="submit" disabled={pending} className="btn-ghost self-start">
               Odrzuć zgłoszenie
             </button>
           </form>
@@ -555,13 +707,13 @@ export default function SubmissionDetailPage() {
       ) : null}
 
       {item.canAssignArtist ? (
-        <section className="flex flex-col gap-2 text-sm">
-          <h2 className="text-lg font-medium">Przypisz artystę</h2>
-          <div className="flex flex-wrap gap-2">
+        <section className="border-t border-paper-line pt-8">
+          <h2 className="section-title">Przypisz artystę</h2>
+          <div className="mt-4 flex max-w-lg flex-wrap gap-2">
             <select
               value={assignId}
               onChange={(e) => setAssignId(e.target.value)}
-              className="min-w-[12rem] flex-1 rounded border border-neutral-300 bg-white px-3 py-2"
+              className="field-input min-w-[12rem] flex-1"
             >
               <option value="">Bez przypisania (pula)</option>
               {artists.map((a) => (
@@ -574,7 +726,7 @@ export default function SubmissionDetailPage() {
               type="button"
               disabled={pending}
               onClick={() => void onAssign()}
-              className="rounded bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="btn-primary"
             >
               Zapisz
             </button>
@@ -582,33 +734,14 @@ export default function SubmissionDetailPage() {
         </section>
       ) : null}
 
-      {item.isArchived && user?.role === 'ADMIN' ? (
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => void onRestore()}
-          className="self-start rounded border border-neutral-300 px-3 py-2 text-sm"
-        >
-          Przywróć z archiwum
-        </button>
-      ) : null}
-
-      {item.canDelete ? (
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => void onDelete()}
-          className="self-start text-sm text-red-700 underline disabled:opacity-50"
-        >
-          Usuń / archiwizuj
-        </button>
-      ) : null}
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Wiadomości</h2>
-        <ul className="flex flex-col gap-2">
+      <section className="border-t border-paper-line pt-8">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="section-title">Wiadomości</h2>
+          <p className="text-xs text-ink-faint">Odświeża się automatycznie</p>
+        </div>
+        <ul className="mt-4 flex flex-col gap-3">
           {messages.length === 0 ? (
-            <li className="text-sm text-neutral-600">Brak wiadomości.</li>
+            <li className="text-sm text-ink-muted">Brak wiadomości.</li>
           ) : (
             messages.map((m) => {
               const name =
@@ -616,32 +749,34 @@ export default function SubmissionDetailPage() {
               return (
                 <li
                   key={m.id}
-                  className={`rounded px-3 py-2 text-sm ${
-                    m.system ? 'border border-amber-200 bg-amber-50' : 'border border-neutral-200'
+                  className={`px-4 py-3 text-sm ${
+                    m.system
+                      ? 'border border-paper-line bg-paper-soft'
+                      : 'border border-paper-line bg-paper-pure'
                   }`}
                 >
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-ink-faint">
                     {m.system ? 'System' : name} · {new Date(m.createdAt).toLocaleString('pl-PL')}
                   </p>
-                  <p className="mt-1 whitespace-pre-wrap">{m.body}</p>
+                  <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{m.body}</p>
                 </li>
               );
             })
           )}
         </ul>
         {item.canMessage ? (
-          <form onSubmit={onSendMessage} className="flex flex-col gap-2 text-sm">
+          <form onSubmit={onSendMessage} className="mt-4 flex flex-col gap-2">
             <textarea
               rows={3}
               value={messageBody}
               onChange={(e) => setMessageBody(e.target.value)}
               placeholder="Napisz wiadomość…"
-              className="rounded border border-neutral-300 px-3 py-2"
+              className="field-input"
             />
             <button
               type="submit"
               disabled={pending || !messageBody.trim()}
-              className="self-start rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              className="btn-primary self-start"
             >
               Wyślij
             </button>
@@ -649,58 +784,47 @@ export default function SubmissionDetailPage() {
         ) : null}
       </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">
-          Zdjęcia referencyjne ({item.photos.length}/{REFERENCE_PHOTO.maxFiles})
-        </h2>
-        {item.photos.length > 0 ? (
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {item.photos.map((p) => (
-              <li key={p.id} className="flex flex-col gap-1.5">
-                {p.url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={p.url}
-                    alt={p.fileName}
-                    className="aspect-square w-full bg-neutral-100 object-cover"
-                  />
-                ) : (
-                  <div className="flex aspect-square items-center justify-center bg-neutral-100 text-xs text-neutral-500">
-                    Brak podglądu
-                  </div>
-                )}
-                {item.canEditPhotos ? (
-                  <button
-                    type="button"
-                    onClick={() => void onRemovePhoto(p.id)}
-                    className="text-xs underline"
-                  >
-                    Usuń
-                  </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-neutral-600">Brak zdjęć.</p>
-        )}
-        {item.canEditPhotos && item.photos.length < REFERENCE_PHOTO.maxFiles ? (
-          <input
-            type="file"
-            accept={ACCEPT}
-            multiple
-            disabled={uploading}
-            onChange={(e) => {
-              void onUpload(e.target.files);
-              e.target.value = '';
-            }}
-            className="text-sm file:mr-3 file:rounded file:border-0 file:bg-neutral-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
-          />
-        ) : null}
-      </section>
+      {(item.isArchived && user?.role === 'ADMIN') ||
+      (!item.isArchived && (item.canArchive || item.canHardDelete)) ? (
+        <section className="border-t border-paper-line pt-8">
+          <h2 className="section-title">Administracja</h2>
+          <div className="mt-4 flex flex-wrap gap-3">
+            {item.isArchived && user?.role === 'ADMIN' ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => void onRestore()}
+                className="btn-ghost"
+              >
+                Przywróć z archiwum
+              </button>
+            ) : null}
+            {!item.isArchived && item.canArchive ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => void onRemove('archive')}
+                className="btn-danger"
+              >
+                Przenieś do archiwum
+              </button>
+            ) : null}
+            {!item.isArchived && item.canHardDelete ? (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => void onRemove('hard')}
+                className="btn-danger"
+              >
+                Usuń na zawsze
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {actionError ? (
-        <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+        <p className="alert" role="alert">
           {actionError}
         </p>
       ) : null}

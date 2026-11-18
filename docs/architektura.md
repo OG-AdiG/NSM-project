@@ -61,3 +61,11 @@ Zgodnie z założeniami z rozdziału 1.7 pracy.
 - Podgląd: podpisane URL GET (TTL ~15 min) w odpowiedzi szczegółów zgłoszenia.
 - Na serwerze Docker: `docker compose up -d minio` (obraz `bitnamilegacy/minio`).
 - `S3_ENDPOINT` musi być osiągalny z przeglądarki (IP LAN, nie `localhost` z Windows → serwer).
+
+## Rezerwacje (FR-13–16)
+
+- Grafik: `WeeklyAvailability` + `ArtistAbsence` (`PUT/GET /artists/:id/availability`, absences).
+- Wolne sloty: `GET /artists/:id/slots?from&to&durationMinutes`.
+- Sesje: `TattooSession` + Postgres `EXCLUDE USING gist` (brak nachodzenia aktywnych sesji artysty).
+- Wielosesyjność: `sessionIndex` + `sessionCount` ze zgłoszenia (`GET /sessions/project/:submissionId`).
+- UI: `/grafik`, `/rezerwacje`, panel rezerwacji na zgłoszeniu ACCEPTED.

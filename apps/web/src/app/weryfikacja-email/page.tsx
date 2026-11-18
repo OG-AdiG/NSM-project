@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -32,12 +32,12 @@ function VerifyInner() {
   }, [token]);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6">
-      <h1 className="text-3xl font-semibold">Weryfikacja e-mail</h1>
-      {status === 'loading' ? <p className="text-neutral-600">Potwierdzanie…</p> : null}
-      {status === 'ok' ? <p className="text-green-800">{message}</p> : null}
-      {status === 'error' ? <p className="text-red-700">{message}</p> : null}
-      <Link href="/logowanie" className="text-sm font-medium underline">
+    <main className="page-narrow justify-center">
+      <h1 className="display !text-3xl">Weryfikacja e-mail</h1>
+      {status === 'loading' ? <p className="lede">Potwierdzanie…</p> : null}
+      {status === 'ok' ? <p className="panel text-sm">{message}</p> : null}
+      {status === 'error' ? <p className="alert">{message}</p> : null}
+      <Link href="/logowanie" className="btn-primary self-start">
         Przejdź do logowania
       </Link>
     </main>

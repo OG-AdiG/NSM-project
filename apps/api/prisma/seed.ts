@@ -54,6 +54,19 @@ async function main() {
     },
   });
 
+  // FR-13: domyślny grafik pon–pt 10:00–18:00
+  const existingAvail = await prisma.weeklyAvailability.count({ where: { artistId: artist.id } });
+  if (existingAvail === 0) {
+    await prisma.weeklyAvailability.createMany({
+      data: [1, 2, 3, 4, 5].map((weekday) => ({
+        artistId: artist.id,
+        weekday,
+        startMin: 10 * 60,
+        endMin: 18 * 60,
+      })),
+    });
+  }
+
   console.log(`Seed OK: admin ${adminEmail} / ${adminPassword}`);
   console.log(`Seed OK: artysta ${artistEmail} / ${artistPassword}`);
 }

@@ -6,6 +6,8 @@ import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PricingModule } from './pricing/pricing.module';
+import { ScheduleModule } from './schedule/schedule.module';
+import { SessionsModule } from './sessions/sessions.module';
 import { StorageModule } from './storage/storage.module';
 import { SubmissionsModule } from './submissions/submissions.module';
 
@@ -22,6 +24,8 @@ import { SubmissionsModule } from './submissions/submissions.module';
     ArtistsModule,
     PricingModule,
     SubmissionsModule,
+    ScheduleModule,
+    SessionsModule,
     HealthModule,
   ],
 })

@@ -16,13 +16,13 @@ export default function RegisterPage() {
 
   if (done) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6">
-        <h1 className="text-3xl font-semibold">Sprawdź skrzynkę e-mail</h1>
-        <p className="text-neutral-600">
+      <main className="page-narrow justify-center">
+        <h1 className="display !text-3xl">Sprawdź skrzynkę e-mail</h1>
+        <p className="lede">
           Konto zostało utworzone. Wysłaliśmy link potwierdzający na adres{' '}
-          <strong>{email}</strong>. Po weryfikacji możesz się zalogować.
+          <strong className="text-ink">{email}</strong>. Po weryfikacji możesz się zalogować.
         </p>
-        <Link href="/logowanie" className="text-sm font-medium underline">
+        <Link href="/logowanie" className="btn-primary self-start">
           Przejdź do logowania
         </Link>
       </main>
@@ -32,7 +32,7 @@ export default function RegisterPage() {
   return (
     <AuthForm
       title="Rejestracja"
-      subtitle="Załóż konto klienta (FR-01)."
+      subtitle="Załóż konto klienta."
       submitLabel="Utwórz konto"
       onSubmit={async () => {
         await apiFetch('/auth/register', {
@@ -45,7 +45,7 @@ export default function RegisterPage() {
       footer={
         <>
           Masz już konto?{' '}
-          <Link href="/logowanie" className="font-medium underline">
+          <Link href="/logowanie" className="btn-text">
             Zaloguj się
           </Link>
         </>

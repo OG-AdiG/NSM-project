@@ -66,10 +66,14 @@ model User {
   updatedAt       DateTime  @updatedAt
 
   tokens                 AuthToken[]
-  submissionsAsClient    Submission[]        @relation("SubmissionClient")
-  submissionsAsArtist    Submission[]        @relation("SubmissionArtist")
+  submissionsAsClient    Submission[]         @relation("SubmissionClient")
+  submissionsAsArtist    Submission[]         @relation("SubmissionArtist")
   artistProfile          ArtistProfile?
   submissionMessages     SubmissionMessage[]
+  weeklyAvailability     WeeklyAvailability[]
+  absences               ArtistAbsence[]
+  sessionsAsArtist       TattooSession[]      @relation("SessionArtist")
+  sessionsAsClient       TattooSession[]      @relation("SessionClient")
 }
 
 model AuthToken {
@@ -121,6 +125,11 @@ model Submission {
   sessionCount      Int?
   quoteNote         String?
   rejectionReason   String?
+  /// Preferowany termin z formularza zgłoszenia (orientacyjny, przed rezerwacją)
+  preferredDate       DateTime?
+  preferredSlotStart  DateTime?
+  preferredSlotEnd    DateTime?
+  preferredTimeNote   String?
   /// Soft-delete / archiwum (po ACCEPTED+ nie kasujemy twardo)
   deletedAt         DateTime?
   createdAt         DateTime         @default(now())
@@ -128,6 +137,7 @@ model Submission {
 
   photos   ReferencePhoto[]
   messages SubmissionMessage[]
+  sessions TattooSession[]
 
   @@index([clientId])
   @@index([preferredArtistId])
@@ -165,4 +175,55 @@ model SubmissionMessage {
 
   @@index([submissionId, createdAt])
   @@index([authorId])
+}
+
+/// Cotygodniowy grafik artysty (FR-13) — minuty od północy, weekday ISO 1=pon … 7=nd
+model WeeklyAvailability {
+  id       String @id @default(cuid())
+  artistId String
+  artist   User   @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  weekday  Int
+  startMin Int
+  endMin   Int
+
+  @@index([artistId, weekday])
+  @@unique([artistId, weekday, startMin, endMin])
+}
+
+/// Nieobecności / blokady (FR-13)
+model ArtistAbsence {
+  id        String   @id @default(cuid())
+  artistId  String
+  artist    User     @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  startsAt  DateTime
+  endsAt    DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([artistId, startsAt, endsAt])
+}
+
+/// Rezerwacja / sesja (FR-14–FR-16). Kolizje blokuje EXCLUDE w migracji SQL (NFR-08).
+model TattooSession {
+  id           String        @id @default(cuid())
+  submissionId String?
+  submission   Submission?   @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  artistId     String
+  artist       User          @relation("SessionArtist", fields: [artistId], references: [id], onDelete: Cascade)
+  clientId     String
+  client       User          @relation("SessionClient", fields: [clientId], references: [id], onDelete: Cascade)
+  startsAt     DateTime
+  endsAt       DateTime
+  type         SessionType   @default(SESSION)
+  status       SessionStatus @default(AWAITING_DEPOSIT)
+  /// Numer sesji w projekcie wieloetapowym (FR-16)
+  sessionIndex Int           @default(1)
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([artistId, startsAt])
+  @@index([clientId, startsAt])
+  @@index([submissionId, sessionIndex])
+  @@index([status])
 }

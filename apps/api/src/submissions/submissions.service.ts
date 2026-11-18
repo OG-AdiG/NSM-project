@@ -7,7 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, Role, SubmissionStatus } from '@prisma/client';
+import { Prisma, Role, SessionStatus, SessionType, SubmissionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { REFERENCE_PHOTO } from '../storage/photo-limits';
@@ -98,6 +98,20 @@ export class SubmissionsService {
       bodyPart: dto.bodyPart,
     });
 
+    if (dto.preferredSlotStart && dto.preferredSlotEnd) {
+      const a = new Date(dto.preferredSlotStart);
+      const b = new Date(dto.preferredSlotEnd);
+      if (!(b > a)) {
+        throw new BadRequestException('Preferowana godzina końca musi być po początku');
+      }
+    }
+
+    const preferredDate = dto.preferredDate
+      ? new Date(dto.preferredDate.includes('T') ? dto.preferredDate : `${dto.preferredDate}T12:00:00`)
+      : dto.preferredSlotStart
+        ? new Date(dto.preferredSlotStart)
+        : null;
+
     const created = await this.prisma.submission.create({
       data: {
         clientId: user.id,
@@ -111,6 +125,10 @@ export class SubmissionsService {
         estimateMinPln: estimate.minPln,
         estimateMaxPln: estimate.maxPln,
         sessionCount: estimate.suggestedSessions,
+        preferredDate,
+        preferredSlotStart: dto.preferredSlotStart ? new Date(dto.preferredSlotStart) : null,
+        preferredSlotEnd: dto.preferredSlotEnd ? new Date(dto.preferredSlotEnd) : null,
+        preferredTimeNote: dto.preferredTimeNote?.trim() || null,
       },
       include: {
         ...submissionInclude,
@@ -187,7 +205,101 @@ export class SubmissionsService {
         client: { select: clientSelect },
       },
     });
+
+    if (dto.status === SubmissionStatus.ACCEPTED) {
+      await this.tryBookPreferredSlotAfterAccept(user, updated);
+    }
+
     return this.enrich(user, updated);
+  }
+
+  /** Po akceptacji wyceny — utwórz sesję z preferowanego slotu (jeśli nadal wolny). */
+  private async tryBookPreferredSlotAfterAccept(
+    actor: AuthUser,
+    submission: {
+      id: string;
+      clientId: string;
+      preferredArtistId: string | null;
+      preferredSlotStart: Date | null;
+      preferredSlotEnd: Date | null;
+      sessionCount: number | null;
+    },
+  ) {
+    const artistId = submission.preferredArtistId;
+    const startsAt = submission.preferredSlotStart;
+    const endsAt = submission.preferredSlotEnd;
+
+    if (!artistId || !startsAt || !endsAt) {
+      await this.prisma.submissionMessage.create({
+        data: {
+          submissionId: submission.id,
+          authorId: actor.id,
+          body:
+            'Wycena zaakceptowana. Umów termin sesji w sekcji rezerwacji na stronie zgłoszenia.',
+          system: true,
+        },
+      });
+      return;
+    }
+
+    if (!(endsAt > startsAt) || startsAt.getTime() < Date.now() + 30 * 60 * 1000) {
+      await this.prisma.submissionMessage.create({
+        data: {
+          submissionId: submission.id,
+          authorId: actor.id,
+          body:
+            'Wycena zaakceptowana, ale preferowany termin jest już niedostępny. Wybierz nowy termin w sekcji rezerwacji.',
+          system: true,
+        },
+      });
+      return;
+    }
+
+    const existing = await this.prisma.tattooSession.count({
+      where: {
+        submissionId: submission.id,
+        status: { not: SessionStatus.CANCELLED },
+      },
+    });
+    if (existing > 0) return;
+
+    try {
+      await this.prisma.tattooSession.create({
+        data: {
+          artistId,
+          clientId: submission.clientId,
+          submissionId: submission.id,
+          startsAt,
+          endsAt,
+          type: SessionType.SESSION,
+          status: SessionStatus.AWAITING_DEPOSIT,
+          sessionIndex: 1,
+        },
+      });
+      await this.prisma.submissionMessage.create({
+        data: {
+          submissionId: submission.id,
+          authorId: actor.id,
+          body: `Wycena zaakceptowana. Zarezerwowano preferowany termin: ${startsAt.toLocaleString('pl-PL')} – ${endsAt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}. Szczegóły w Rezerwacjach.`,
+          system: true,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Nie udało się zarezerwować preferowanego slotu dla ${submission.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      await this.prisma.submissionMessage.create({
+        data: {
+          submissionId: submission.id,
+          authorId: actor.id,
+          body:
+            'Wycena zaakceptowana, ale preferowany termin jest zajęty. Wybierz inny termin w sekcji rezerwacji.',
+          system: true,
+        },
+      });
+    }
   }
 
   async createQuote(user: AuthUser, id: string, dto: CreateQuoteDto) {
@@ -341,7 +453,7 @@ export class SubmissionsService {
     return this.enrich(user, updated);
   }
 
-  async remove(user: AuthUser, id: string) {
+  async remove(user: AuthUser, id: string, mode?: 'hard' | 'archive') {
     const submission = await this.findOrFail(id);
     this.assertCanView(user, submission.clientId, submission.preferredArtistId);
 
@@ -352,19 +464,21 @@ export class SubmissionsService {
       throw new ForbiddenException('Tego zgłoszenia nie można usunąć / zarchiwizować w obecnym statusie');
     }
 
-    if (canHardDelete(user.role, submission.status)) {
-      for (const photo of submission.photos) {
-        try {
-          await this.storage.deleteObject(photo.objectKey);
-        } catch {
-          // ignore
-        }
-      }
-      await this.prisma.submission.delete({ where: { id } });
-      return { message: 'Zgłoszenie usunięte', mode: 'hard' as const };
-    }
+    const allowHard = canHardDelete(user.role, submission.status);
+    const allowArchive = canArchive(user.role, submission.status);
 
-    if (canArchive(user.role, submission.status)) {
+    // Jawny wybór z UI; bez mode: preferuj archiwum gdy dostępne
+    const resolved: 'hard' | 'archive' =
+      mode === 'hard' || mode === 'archive'
+        ? mode
+        : allowArchive
+          ? 'archive'
+          : 'hard';
+
+    if (resolved === 'archive') {
+      if (!allowArchive) {
+        throw new ForbiddenException('Tego zgłoszenia nie można przenieść do archiwum');
+      }
       await this.prisma.submission.update({
         where: { id },
         data: { deletedAt: new Date() },
@@ -372,7 +486,18 @@ export class SubmissionsService {
       return { message: 'Zgłoszenie przeniesione do archiwum', mode: 'archive' as const };
     }
 
-    throw new ForbiddenException('Brak uprawnień do usunięcia');
+    if (!allowHard) {
+      throw new ForbiddenException('Tego zgłoszenia nie można trwale usunąć');
+    }
+    for (const photo of submission.photos) {
+      try {
+        await this.storage.deleteObject(photo.objectKey);
+      } catch {
+        // ignore
+      }
+    }
+    await this.prisma.submission.delete({ where: { id } });
+    return { message: 'Zgłoszenie trwale usunięte', mode: 'hard' as const };
   }
 
   async restore(user: AuthUser, id: string) {

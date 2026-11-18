@@ -12,10 +12,10 @@ export default function ForgotPasswordPage() {
 
   if (done) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 px-6">
-        <h1 className="text-3xl font-semibold">Sprawdź e-mail</h1>
-        <p className="text-neutral-600">{message}</p>
-        <Link href="/logowanie" className="underline">
+      <main className="page-narrow justify-center">
+        <h1 className="display !text-3xl">Sprawdź e-mail</h1>
+        <p className="text-ink-muted">{message}</p>
+        <Link href="/logowanie" className="btn-text">
           Powrót do logowania
         </Link>
       </main>
@@ -25,7 +25,7 @@ export default function ForgotPasswordPage() {
   return (
     <AuthForm
       title="Przypomnij hasło"
-      subtitle="Wyślemy link do resetu hasła (FR-03)."
+      subtitle="Wyślemy link do resetu hasła."
       submitLabel="Wyślij link"
       onSubmit={async () => {
         const res = await apiFetch<{ message: string }>('/auth/forgot-password', {
@@ -36,7 +36,7 @@ export default function ForgotPasswordPage() {
         setDone(true);
       }}
       footer={
-        <Link href="/logowanie" className="underline">
+        <Link href="/logowanie" className="btn-text">
           Powrót do logowania
         </Link>
       }

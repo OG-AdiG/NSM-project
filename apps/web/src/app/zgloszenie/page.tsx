@@ -7,6 +7,7 @@ import {
   BODY_PART_OPTIONS,
   COLOR_MODE_LABELS,
   COLOR_MODES,
+  DEFAULT_SLOT_MINUTES,
   estimateTattooPrice,
   REFERENCE_PHOTO,
   SIZE_OPTIONS,
@@ -23,8 +24,22 @@ type Artist = {
   bio: string | null;
 };
 
+type Slot = { startsAt: string; endsAt: string };
+
 const ACCEPT = REFERENCE_PHOTO.allowedMimeTypes.join(',');
 const MAX_MB = Math.round(REFERENCE_PHOTO.maxBytes / (1024 * 1024));
+const DURATION_OPTIONS = [60, 90, 120, 180, 240] as const;
+
+function todayLocalIsoDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function dayRangeIso(dateStr: string) {
+  const start = new Date(`${dateStr}T00:00:00`);
+  const end = new Date(`${dateStr}T23:59:59.999`);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
 
 export default function NewSubmissionPage() {
   const router = useRouter();
@@ -35,9 +50,22 @@ export default function NewSubmissionPage() {
   const [style, setStyle] = useState('');
   const [colorMode, setColorMode] = useState<(typeof COLOR_MODES)[number]>('BLACK_GREY');
   const [preferredArtistId, setPreferredArtistId] = useState('');
+  const [preferredDate, setPreferredDate] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState(DEFAULT_SLOT_MINUTES);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [timeNote, setTimeNote] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  const minDate = todayLocalIsoDate();
+  const maxDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 90);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
 
   const estimate = useMemo(() => {
     if (!bodyPart.trim() || !size.trim() || !style.trim()) return null;
@@ -54,6 +82,21 @@ export default function NewSubmissionPage() {
       .then(setArtists)
       .catch(() => setArtists([]));
   }, [router]);
+
+  useEffect(() => {
+    setSelectedSlot(null);
+    setSlots([]);
+    if (!preferredArtistId || !preferredDate) return;
+
+    setLoadingSlots(true);
+    const { from, to } = dayRangeIso(preferredDate);
+    apiFetch<{ slots: Slot[] }>(
+      `/artists/${preferredArtistId}/slots?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&durationMinutes=${durationMinutes}`,
+    )
+      .then((res) => setSlots(res.slots))
+      .catch(() => setSlots([]))
+      .finally(() => setLoadingSlots(false));
+  }, [preferredArtistId, preferredDate, durationMinutes]);
 
   function onFilesChange(list: FileList | null) {
     if (!list) return;
@@ -89,6 +132,13 @@ export default function NewSubmissionPage() {
       router.replace('/logowanie');
       return;
     }
+    if (!preferredDate) {
+      setError('Wybierz preferowaną datę wizyty');
+      return;
+    }
+
+    const slot = selectedSlot ? slots.find((s) => s.startsAt === selectedSlot) : null;
+
     setPending(true);
     try {
       const created = await apiFetch<{ id: string }>('/submissions', {
@@ -100,7 +150,12 @@ export default function NewSubmissionPage() {
           size,
           style,
           colorMode,
+          preferredDate,
           ...(preferredArtistId ? { preferredArtistId } : {}),
+          ...(slot
+            ? { preferredSlotStart: slot.startsAt, preferredSlotEnd: slot.endsAt }
+            : {}),
+          ...(timeNote.trim() ? { preferredTimeNote: timeNote.trim() } : {}),
         }),
       });
 
@@ -123,14 +178,15 @@ export default function NewSubmissionPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col gap-6 px-6 py-12">
+    <main className="page">
       <div>
-        <Link href="/zgloszenia" className="text-sm text-neutral-500 hover:text-neutral-800">
+        <Link href="/zgloszenia" className="text-sm back-link">
           ← Moje zgłoszenia
         </Link>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight">Nowe zgłoszenie</h1>
-        <p className="mt-2 text-neutral-600">
-          Opisz pomysł na tatuaż i dołącz zdjęcia referencyjne (opcjonalnie).
+        <p className="eyebrow mt-6">Formularz</p>
+        <h1 className="display mt-2 !text-3xl">Nowe zgłoszenie</h1>
+        <p className="lede mt-2">
+          Opisz pomysł, wybierz preferowaną datę i ewentualnie godzinę.
         </p>
       </div>
 
@@ -144,7 +200,7 @@ export default function NewSubmissionPage() {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Opisz motyw, nastrój, elementy, których chcesz uniknąć…"
-            className="rounded border border-neutral-300 px-3 py-2 outline-none ring-neutral-400 focus:ring-2"
+            className="field-input "
           />
         </label>
 
@@ -156,7 +212,7 @@ export default function NewSubmissionPage() {
             value={bodyPart}
             onChange={(e) => setBodyPart(e.target.value)}
             placeholder="np. przedramię"
-            className="rounded border border-neutral-300 px-3 py-2 outline-none ring-neutral-400 focus:ring-2"
+            className="field-input "
           />
           <datalist id="body-parts">
             {BODY_PART_OPTIONS.map((o) => (
@@ -173,7 +229,7 @@ export default function NewSubmissionPage() {
             value={size}
             onChange={(e) => setSize(e.target.value)}
             placeholder="np. średni (5–15 cm)"
-            className="rounded border border-neutral-300 px-3 py-2 outline-none ring-neutral-400 focus:ring-2"
+            className="field-input "
           />
           <datalist id="sizes">
             {SIZE_OPTIONS.map((o) => (
@@ -190,7 +246,7 @@ export default function NewSubmissionPage() {
             value={style}
             onChange={(e) => setStyle(e.target.value)}
             placeholder="np. fineline"
-            className="rounded border border-neutral-300 px-3 py-2 outline-none ring-neutral-400 focus:ring-2"
+            className="field-input "
           />
           <datalist id="styles">
             {STYLE_OPTIONS.map((o) => (
@@ -222,7 +278,7 @@ export default function NewSubmissionPage() {
           <select
             value={preferredArtistId}
             onChange={(e) => setPreferredArtistId(e.target.value)}
-            className="rounded border border-neutral-300 bg-white px-3 py-2 outline-none ring-neutral-400 focus:ring-2"
+            className="field-input "
           >
             <option value="">Bez preferencji</option>
             {artists.map((a) => (
@@ -234,13 +290,95 @@ export default function NewSubmissionPage() {
           </select>
         </label>
 
+        <fieldset className="panel flex flex-col gap-3">
+          <legend className="px-1 text-sm font-medium">Preferowany termin</legend>
+
+          <label className="flex flex-col gap-1.5 text-sm">
+            <span className="font-medium">Data</span>
+            <input
+              type="date"
+              required
+              min={minDate}
+              max={maxDate}
+              value={preferredDate}
+              onChange={(e) => setPreferredDate(e.target.value)}
+              className="field-input "
+            />
+          </label>
+
+          {preferredArtistId ? (
+            <>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Czas trwania sesji</span>
+                <select
+                  value={durationMinutes}
+                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                  className="field-input"
+                >
+                  {DURATION_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {m} min
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="flex flex-col gap-2 text-sm">
+                <span className="font-medium">Godzina (z grafiku artysty)</span>
+                {!preferredDate ? (
+                  <p className="text-ink-muted">Najpierw wybierz datę.</p>
+                ) : loadingSlots ? (
+                  <p className="text-ink-faint">Ładowanie wolnych godzin…</p>
+                ) : slots.length === 0 ? (
+                  <p className="text-ink-muted">
+                    Brak wolnych slotów tego dnia. Wybierz inną datę albo dopisz uwagi poniżej.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {slots.map((s) => {
+                      const label = new Date(s.startsAt).toLocaleTimeString('pl-PL', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      });
+                      const active = selectedSlot === s.startsAt;
+                      return (
+                        <button
+                          key={s.startsAt}
+                          type="button"
+                          onClick={() => setSelectedSlot(s.startsAt)}
+                          className={`chip ${active ? 'chip-active' : ''}`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-xs text-ink-faint">
+                  To preferencja — ostateczną rezerwację zrobisz po akceptacji wyceny.
+                </p>
+              </div>
+            </>
+          ) : null}
+
+          <label className="flex flex-col gap-1.5 text-sm">
+            <span className="font-medium">Uwagi do terminu (opcjonalnie)</span>
+            <input
+              value={timeNote}
+              onChange={(e) => setTimeNote(e.target.value)}
+              placeholder="np. najlepiej po 16:00, unikam poniedziałków"
+              className="field-input "
+            />
+          </label>
+        </fieldset>
+
         {estimate ? (
-          <div className="rounded border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm">
-            <p className="font-medium">Szacunkowe widełki (FR-09)</p>
+          <div className="rounded border border-paper-line bg-paper-soft px-4 py-3 text-sm">
+            <p className="font-medium">Szacunkowe widełki</p>
             <p className="mt-1 text-lg font-semibold">
               {estimate.minPln}–{estimate.maxPln} zł
             </p>
-            <p className="mt-1 text-neutral-600">
+            <p className="mt-1 text-ink-muted">
               Orientacyjnie ok. {estimate.suggestedSessions}{' '}
               {estimate.suggestedSessions === 1 ? 'sesja' : 'sesje'}. Ostateczną wycenę poda artysta.
             </p>
@@ -259,10 +397,10 @@ export default function NewSubmissionPage() {
               onFilesChange(e.target.files);
               e.target.value = '';
             }}
-            className="text-sm file:mr-3 file:rounded file:border-0 file:bg-neutral-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white"
+            className="file-input"
           />
           {files.length > 0 ? (
-            <ul className="space-y-1 text-neutral-700">
+            <ul className="space-y-1 text-ink-soft">
               {files.map((f, i) => (
                 <li key={`${f.name}-${i}`} className="flex items-center justify-between gap-2">
                   <span className="truncate">
@@ -271,7 +409,7 @@ export default function NewSubmissionPage() {
                   <button
                     type="button"
                     onClick={() => removeFile(i)}
-                    className="shrink-0 text-neutral-500 underline hover:text-neutral-900"
+                    className="btn-danger shrink-0 text-xs"
                   >
                     Usuń
                   </button>
@@ -282,7 +420,7 @@ export default function NewSubmissionPage() {
         </div>
 
         {error ? (
-          <p className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
+          <p className="alert" role="alert">
             {error}
           </p>
         ) : null}
@@ -290,7 +428,7 @@ export default function NewSubmissionPage() {
         <button
           type="submit"
           disabled={pending}
-          className="rounded bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
+          className="btn-primary"
         >
           {pending ? 'Wysyłanie…' : 'Wyślij zgłoszenie'}
         </button>

@@ -44,10 +44,10 @@
 
 ### Terminy i rezerwacje
 
-- [ ] FR-13 Grafik i nieobecności artysty *(wysoki)*
-- [ ] FR-14 Wolne terminy *(wysoki)*
-- [ ] FR-15 Rezerwacja bez kolizji (exclusion constraint) *(wysoki)*
-- [ ] FR-16 Projekty wieloetapowe *(wysoki)*
+- [x] FR-13 Grafik i nieobecności artysty *(wysoki)*
+- [x] FR-14 Wolne terminy *(wysoki)*
+- [x] FR-15 Rezerwacja bez kolizji (exclusion constraint) *(wysoki)*
+- [x] FR-16 Projekty wieloetapowe *(wysoki)*
 - [ ] FR-17 Zmiana / odwołanie wg reguł *(wysoki)*
 - [ ] FR-18 Przypomnienia e-mail/push *(średni)*
 
@@ -97,7 +97,7 @@
 - [ ] NFR-05 Pliki przez signed URL / auth
 - [ ] NFR-06 Wydajność API ~500 ms / homepage ~3 s (cele)
 - [ ] NFR-07 Backup DB codziennie, dostępność ~99%
-- [ ] NFR-08 Transakcje + exclusion constraint na terminach
+- [x] NFR-08 Transakcje + exclusion constraint na terminach
 - [ ] NFR-09 UI PL, responsywny
 - [ ] NFR-10 Zgłoszenie ≤ 5 kroków, WCAG 2.1 AA (podstawy)
 - [ ] NFR-11 Chrome/Firefox/Safari/Edge + iOS 16+
